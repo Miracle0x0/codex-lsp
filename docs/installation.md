@@ -1,0 +1,102 @@
+# Installation
+
+## Requirements
+
+- Codex CLI with the `mcp_2026_07_28` feature (verified with Codex 0.163.0). The plugin speaks only the `2026-07-28` MCP revision.
+- Node.js 20 or newer on `PATH` (Codex starts the plugin with `node`).
+- The language servers for your languages, on the `PATH` of the environment you work in. Common ones:
+
+| Language | Server | Install |
+|----------|--------|---------|
+| Python | `pyright-langserver` (Pyright); optional `ruff` | `npm install -g pyright`; `pipx install ruff` |
+| TypeScript / JavaScript | `typescript-language-server`, plus `typescript` in the project | `npm install -g typescript-language-server`; `npm install -D typescript` |
+| Go | `gopls` | `go install golang.org/x/tools/gopls@latest` |
+| Rust | `rust-analyzer` | `rustup component add rust-analyzer` |
+| C / C++ | `clangd` (reads `compile_commands.json`) | your system package manager |
+
+Other languages have built-in routes too; `lsp.status` lists every configured server and whether it was found. See [Configuration](configuration.md) for the full list and for adding servers.
+
+## Build the plugin
+
+From a checkout of this repository:
+
+```bash
+git submodule update --init --recursive
+pnpm install --frozen-lockfile
+pnpm run test:package
+```
+
+`test:package` builds both packages and stages a self-contained plugin in `artifacts/codex-lsp-plugin/` with a flat (hoisted) `node_modules`. Codex drops symbolic links when it installs a plugin, so install from this staged directory, not from the source tree.
+
+## Install into Codex
+
+1. Create a local marketplace directory that lists the staged plugin:
+
+   ```text
+   my-marketplace/
+   ├── .agents/plugins/marketplace.json
+   └── plugins/codex-lsp/        <- copy of artifacts/codex-lsp-plugin/
+   ```
+
+   `marketplace.json`:
+
+   ```json
+   {
+   	"name": "local",
+   	"plugins": [
+   		{
+   			"name": "codex-lsp",
+   			"source": { "source": "local", "path": "./plugins/codex-lsp" },
+   			"policy": { "installation": "AVAILABLE", "authentication": "ON_INSTALL" }
+   		}
+   	]
+   }
+   ```
+
+2. Register the marketplace and install the plugin. Listing a plugin as enabled in `config.toml` is not enough; it must be installed:
+
+   ```bash
+   codex plugin marketplace add /path/to/my-marketplace
+   codex plugin add codex-lsp@local
+   ```
+
+3. Enable the protocol revision in `~/.codex/config.toml`:
+
+   ```toml
+   [features]
+   mcp_2026_07_28 = true
+   ```
+
+4. Start Codex and trust the plugin's hooks. Codex runs hooks only with persisted hook trust; until then the tools work but edits are not checked automatically. For unattended runs that already vet the hook source, `codex exec --dangerously-bypass-hook-trust` skips the check for that one invocation.
+
+To update, rebuild with `pnpm run test:package`, replace `plugins/codex-lsp/` in the marketplace, and run `codex plugin add codex-lsp@local` again. `codex plugin remove codex-lsp@local` uninstalls it.
+
+## Check that it works
+
+In a Codex session inside a project:
+
+1. Ask Codex to call `lsp.status`. It should list the configured servers, which of them were found, and the bound environment.
+2. Ask Codex to introduce a type error with `apply_patch`. The next turn should contain a block starting with `LSP diagnostics after apply_patch`.
+
+If either step fails, see [Troubleshooting](troubleshooting.md).
+
+## What the plugin contains
+
+| File | Purpose |
+|------|---------|
+| `.codex-plugin/plugin.json` | Plugin manifest (Codex compat layout) |
+| `.mcp.json` | The `lsp` MCP server: `node ./dist/cli.js mcp` started from the plugin directory, with `CODEX_MCP_PROTOCOL_VERSION=2026-07-28` and the forwarded environment-binding variables |
+| `hooks/hooks.json` | `mcp_tool` hooks on `apply_patch` and `Bash` (see [Post-edit diagnostics](post-edit-diagnostics.md)) |
+| `skills/lsp/SKILL.md` | Guidance Codex reads about when and how to use the tools |
+| `shell/` | Shell integration templates (see [Shell environments](environments.md)) |
+| `dist/`, `node_modules/` | The runtime and its Node dependencies |
+
+## Using codex-lsp without the plugin system
+
+`codex-lsp config mcp` prints `config.toml` sections (feature flag, MCP server, and both hooks) pointing at this installation. Review them and add them to `~/.codex/config.toml` yourself; the command changes nothing:
+
+```bash
+node /path/to/codex-lsp/dist/cli.js config mcp
+```
+
+Hooks configured this way also need to be trusted in Codex.

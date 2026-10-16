@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Usage documentation in `docs/` (installation, shell environments, post-edit diagnostics, tools, configuration, troubleshooting); the README now links to it.
+- Picks up the runtime's Rust fixes: the first rust-analyzer check waits for workspace loading instead of reporting an empty result, `cargo check` errors are merged in, and dynamically registered `didSave` is honoured.
 - Development and CI use a pnpm workspace that includes the `lsp-tools-mcp` submodule through `workspace:*`.
 - The plugin uses the Codex compat layout (`.codex-plugin/plugin.json` + `.mcp.json`) and is staged by `pnpm run test:package` with a hoisted, link-free `node_modules`.
 - The MCP entry is the root CLI; it serves the `2026-07-28` MCP revision and reads the workspace from Codex turn metadata.
