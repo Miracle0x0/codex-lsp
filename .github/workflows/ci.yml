@@ -32,8 +32,6 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6
-        with:
-          submodules: recursive
 
       - name: Setup pnpm and Node ${{ matrix.node }}
         uses: pnpm/setup@c9883cc79df532ad1a7b81bf9ab944ceb090d65c # v2.0.0
@@ -42,7 +40,7 @@ jobs:
           cache: true
           install: false
 
-      - name: Install workspace
+      - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
       - name: Install zsh for shell integration tests
@@ -50,15 +48,15 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y zsh
 
       - name: Build
-        run: pnpm run build:all
+        run: pnpm run build
 
       - name: Check
-        run: pnpm run check:all
+        run: pnpm run check
 
       - name: Unit tests
         env:
           CODEX_LSP_REQUIRE_PWSH: ${{ runner.os == 'Windows' && '1' || '0' }}
-        run: pnpm run test:all
+        run: pnpm run test
 
       - name: Plugin package
         run: pnpm run test:package
@@ -72,8 +70,6 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v6
-        with:
-          submodules: recursive
       - uses: pnpm/setup@c9883cc79df532ad1a7b81bf9ab944ceb090d65c # v2.0.0
         with:
           runtime: node@24
@@ -89,7 +85,7 @@ jobs:
           sudo apt-get update && sudo apt-get install -y clangd
           rustup component add rust-analyzer
           echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
-      - run: pnpm run build:all
+      - run: pnpm run build
       - run: pnpm run test:integration
 
   codex-contract:
@@ -99,8 +95,6 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v6
-        with:
-          submodules: recursive
       - uses: pnpm/setup@c9883cc79df532ad1a7b81bf9ab944ceb090d65c # v2.0.0
         with:
           runtime: node@24
@@ -125,7 +119,7 @@ jobs:
         env:
           CODEX_LSP_CONTRACT: "1"
           CODEX_LSP_CONTRACT_AUTH: ${{ runner.temp }}/codex-lsp-auth.json
-        run: pnpm exec vitest --run test/codex-contract.test.ts
+        run: pnpm exec vitest --run test/codex/codex-contract.test.ts
       - name: Remove authentication file
         if: always()
         run: rm -f "$RUNNER_TEMP/codex-lsp-auth.json"

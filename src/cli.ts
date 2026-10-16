@@ -2,7 +2,17 @@
 import { realpathSync } from "node:fs";
 import { argv, cwd, env, stderr, stdout } from "node:process";
 import { fileURLToPath } from "node:url";
+import { mcpConfigToml } from "./codex/config-mcp.js";
 
+import { resolveCodexContext } from "./codex/context.js";
+import { captureStateDir, launchBinding } from "./codex/environment/binding.js";
+import { captureEnvironment } from "./codex/environment/capture.js";
+import { listEnvironments, removeEnvironment } from "./codex/environment/manage.js";
+import { type CliCommand, isShellName, SHELLS, shellInitScript } from "./codex/environment/shell-init.js";
+import { BaselineStore } from "./codex/hook/baseline.js";
+import { EditFeedback } from "./codex/hook/edit-feedback.js";
+import { postEditDiagnosticsTool, preEditSnapshotTool, recordingRename } from "./codex/hook/tools.js";
+import { launch } from "./codex/launch.js";
 import {
 	createLspRuntime,
 	ENVIRONMENT_ID_PATTERN,
@@ -11,18 +21,7 @@ import {
 	type RegisteredLspTool,
 	readManifest,
 	serveLspStdio,
-} from "@code-yeongyu/lsp-tools-mcp";
-
-import { resolveCodexContext } from "./codex-context.js";
-import { mcpConfigToml } from "./config-mcp.js";
-import { captureStateDir, launchBinding } from "./environment/binding.js";
-import { captureEnvironment } from "./environment/capture.js";
-import { listEnvironments, removeEnvironment } from "./environment/manage.js";
-import { type CliCommand, isShellName, SHELLS, shellInitScript } from "./environment/shell-init.js";
-import { BaselineStore } from "./hook/baseline.js";
-import { EditFeedback } from "./hook/edit-feedback.js";
-import { postEditDiagnosticsTool, preEditSnapshotTool, recordingRename } from "./hook/tools.js";
-import { launch } from "./launch.js";
+} from "./core/index.js";
 
 const USAGE = `Usage:
   codex-lsp mcp                                  serve the MCP server (started by Codex)

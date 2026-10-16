@@ -2,7 +2,7 @@
 
 ## 1. 分析范围与结论
 
-本文分析 `feat/codex-lsp-upgrade` 分支中的 Codex 适配层及 `packages/lsp-tools-mcp/` 运行时，记录日期为 2026-10-16。文档最初来自静态审查；后续按诊断正确性、上下文一致性、交付验证三个阶段完成修复，并执行回归测试、真实语言服务器集成与制品验证。实现和当前验证范围分别见第 11、12 节。
+本文分析 同一包内的 `src/codex/` 适配层及 `src/core/` 运行时，记录日期为 2026-10-16。文档最初来自静态审查；后续按诊断正确性、上下文一致性、交付验证三个阶段完成修复，并执行回归测试、真实语言服务器集成与制品验证。实现和当前验证范围分别见第 11、12 节。
 
 **结论：项目面向本机 Codex CLI 0.163.0 的主要能力已实现，本轮已修复诊断截断、超时状态、静默漏报及环境同步等已确认问题。** 本机版本基准来自 `~/.local/bin/codex` 指向的 `0.163.0-x86_64-unknown-linux-musl` 安装目录；跨平台、桌面端与已有 daemon 的验证结论不能从本机 CLI 结果推导。
 
@@ -20,11 +20,11 @@
 
 ## 2. 设计理念与模块边界
 
-### 2.1 把宿主适配与语言服务运行时分开
+### 2.1 在单包中保留宿主适配与运行时边界
 
-根包 `codex-lsp` 处理 Codex 特有的生命周期、调用上下文和环境交接；子模块 `lsp-tools-mcp` 处理语言服务器协议、进程、文档、诊断和工作区编辑。子模块通过 `workspace:*` 依赖参与根工作区构建。Codex 的 Hook 字段及元数据格式没有直接进入通用语言服务层。
+项目采用单仓库、单 npm 包：`src/codex/` 处理 Codex 特有的生命周期、调用上下文和环境交接，`src/core/` 处理语言服务器协议、进程、文档、诊断和工作区编辑。两层通过本地 ESM 导入连接，由根入口组合；核心层不导入 Codex 适配层。依赖、锁文件、TypeScript 编译器、测试和发布均由根包统一管理。
 
-根包入口 [src/cli.ts](src/cli.ts) 的 `serveMcp()` 创建一个 `LspRuntime`，把标准工具、重命名结果记录器及两个 Hook 端点组合后交给 stdio 服务：
+统一入口 [src/cli.ts](src/cli.ts) 的 `serveMcp()` 创建一个 `LspRuntime`，把标准工具、重命名结果记录器及两个 Hook 端点组合后交给 stdio 服务：
 
 ```ts
 const baselines = new BaselineStore();
@@ -52,7 +52,7 @@ const handle = serveLspStdio(runtime, {
 
 ### 2.3 由一个管理器拥有语言服务器进程
 
-[LspManager](packages/lsp-tools-mcp/src/lsp/manager.ts) 负责进程获取、初始化共享、引用计数、环境变化后的客户端淘汰和空闲回收。动态语义请求通过 `LspRuntime.withSemantic()` 进入 `withClient()`；诊断服务也通过同一管理器借用客户端。
+[LspManager](src/core/lsp/manager.ts) 负责进程获取、初始化共享、引用计数、环境变化后的客户端淘汰和空闲回收。动态语义请求通过 `LspRuntime.withSemantic()` 进入 `withClient()`；诊断服务也通过同一管理器借用客户端。
 
 管理器还实现了只读请求在连接死亡后的单次重试，写请求不重试。重试过程没有单独进入工具结果。这是当前实现中的自动恢复行为，需要与仓库要求的错误充分暴露原则一并审视。
 
@@ -83,7 +83,7 @@ Hook 的目标是向 Codex 补充诊断上下文，代码没有返回阻断编�
                               |
                               v
        +----------------------------------------------+
-       | lsp-tools-mcp: LspRuntime                     |
+       | src/core/: LspRuntime                         |
        |                                              |
        | ConfigService -> TargetResolver              |
        | EnvironmentService -> toolchain adapters     |
@@ -108,15 +108,15 @@ Hook 的目标是向 Codex 补充诊断上下文，代码没有返回阻断编�
 | 模块         | 主要职责                               | 源码入口                                                                                                 |
 | ------------ | -------------------------------------- | -------------------------------------------------------------------------------------------------------- |
 | CLI 与组合根 | MCP 服务、启动器、环境采集、配置输出   | [src/cli.ts](src/cli.ts)                                                                                 |
-| Codex 上下文 | 从 MCP 元数据提取工作区、会话和轮次    | [src/codex-context.ts](src/codex-context.ts)                                                             |
-| Hook 适配    | 校验参数，生成 Codex Hook JSON         | [src/hook/tools.ts](src/hook/tools.ts)                                                                   |
-| 编辑反馈     | 识别改动、复查、比较基线、组织反馈     | [src/hook/edit-feedback.ts](src/hook/edit-feedback.ts)                                                   |
-| 环境交接     | 读取绑定、采集快照、生成 shell 集成    | [src/environment/](src/environment/)                                                                     |
-| MCP 服务     | 注册工具、传递取消信号、编码结果       | [src/mcp/server.ts](packages/lsp-tools-mcp/src/mcp/server.ts)                                            |
-| 路由与配置   | 合并配置，选择语言、项目根和服务器     | [src/runtime/router.ts](packages/lsp-tools-mcp/src/runtime/router.ts)                                    |
-| LSP 生命周期 | 初始化、能力、请求、进程复用和回收     | [src/lsp/](packages/lsp-tools-mcp/src/lsp/)                                                              |
-| 诊断聚合     | pull/push 收集、时效性和来源状态       | [src/diagnostics/](packages/lsp-tools-mcp/src/diagnostics/)                                              |
-| 文档与编辑   | 文本同步、坐标转换、WorkspaceEdit 落盘 | [src/documents/](packages/lsp-tools-mcp/src/documents/)、[src/edits/](packages/lsp-tools-mcp/src/edits/) |
+| Codex 上下文 | 从 MCP 元数据提取工作区、会话和轮次    | [src/codex/context.ts](src/codex/context.ts)                                                             |
+| Hook 适配    | 校验参数，生成 Codex Hook JSON         | [src/codex/hook/tools.ts](src/codex/hook/tools.ts)                                                                   |
+| 编辑反馈     | 识别改动、复查、比较基线、组织反馈     | [src/codex/hook/edit-feedback.ts](src/codex/hook/edit-feedback.ts)                                                   |
+| 环境交接     | 读取绑定、采集快照、生成 shell 集成    | [src/codex/environment/](src/codex/environment/)                                                                     |
+| MCP 服务     | 注册工具、传递取消信号、编码结果       | [src/core/mcp/server.ts](src/core/mcp/server.ts)                                            |
+| 路由与配置   | 合并配置，选择语言、项目根和服务器     | [src/core/runtime/router.ts](src/core/runtime/router.ts)                                    |
+| LSP 生命周期 | 初始化、能力、请求、进程复用和回收     | [src/core/lsp/](src/core/lsp/)                                                              |
+| 诊断聚合     | pull/push 收集、时效性和来源状态       | [src/core/diagnostics/](src/core/diagnostics/)                                              |
+| 文档与编辑   | 文本同步、坐标转换、WorkspaceEdit 落盘 | [src/core/documents/](src/core/documents/)、[src/core/edits/](src/core/edits/) |
 
 ## 4. 当前 Codex 的接入契约
 
@@ -142,7 +142,7 @@ Hook 的目标是向 Codex 补充诊断上下文，代码没有返回阻断编�
 }
 ```
 
-安装说明要求同时启用 `features.mcp_2026_07_28`。运行时 [serveLspStdio()](packages/lsp-tools-mcp/src/mcp/server.ts) 使用官方 MCP SDK v2，并明确拒绝旧协议：
+安装说明要求同时启用 `features.mcp_2026_07_28`。运行时 [serveLspStdio()](src/core/mcp/server.ts) 使用官方 MCP SDK v2，并明确拒绝旧协议：
 
 ```ts
 return serveStdio(createLspServerFactory(runtime, options), {
@@ -171,7 +171,7 @@ return serveStdio(createLspServerFactory(runtime, options), {
 
 ### 4.3 工作区与会话解析
 
-[resolveCodexContext](src/codex-context.ts) 从 `_meta["x-codex-turn-metadata"]` 提取 `session_id`、`turn_id` 和 `workspaces`。只有一个绝对工作区路径时才推导默认工作区：
+[resolveCodexContext](src/codex/context.ts) 从 `_meta["x-codex-turn-metadata"]` 提取 `session_id`、`turn_id` 和 `workspaces`。只有一个绝对工作区路径时才推导默认工作区：
 
 ```ts
 function singleWorkspace(
@@ -184,7 +184,7 @@ function singleWorkspace(
 }
 ```
 
-通用运行时的工作区优先级是工具参数、宿主上下文、运行时默认值。相对路径缺少工作区时返回 `invalid_path`。绝对路径仍可使用，但若没有 `workspaceRoot`，就无法按预期加载工作区级项目配置；多工作区调用应明确提供该参数。[上下文解析](packages/lsp-tools-mcp/src/runtime/context.ts)
+通用运行时的工作区优先级是工具参数、宿主上下文、运行时默认值。相对路径缺少工作区时返回 `invalid_path`。绝对路径仍可使用，但若没有 `workspaceRoot`，就无法按预期加载工作区级项目配置；多工作区调用应明确提供该参数。[上下文解析](src/core/runtime/context.ts)
 
 Hook 请求直接携带配置插值后的 `cwd`、`sessionId`、`toolUseId`，不依赖普通 MCP 调用的完整 turn metadata。这与根包验证记录中的宿主行为一致。
 
@@ -192,7 +192,7 @@ Hook 请求直接携带配置插值后的 `cwd`、`sessionId`、`toolUseId`，�
 
 ### 5.1 三类环境快照
 
-[captureEnvironment()](src/environment/capture.ts) 与 [snapshot.ts](packages/lsp-tools-mcp/src/environment/snapshot.ts) 共同定义环境身份与磁盘格式。
+[captureEnvironment()](src/codex/environment/capture.ts) 与 [snapshot.ts](src/core/environment/snapshot.ts) 共同定义环境身份与磁盘格式。
 
 | 类型      | 身份及更新方式                                        | 使用场景                                          |
 | --------- | ----------------------------------------------------- | ------------------------------------------------- |
@@ -222,7 +222,7 @@ Hook 请求直接携带配置插值后的 `cwd`、`sessionId`、`toolUseId`，�
                            explicit environmentId
 ```
 
-[launch()](src/launch.ts) 先采集环境，再启动 `codex --no-daemon`，把 `CODEX_LSP_CONTEXT_ID` 和 `CODEX_LSP_ENV_MANIFEST` 放入子进程环境。独立宿主进程使绑定能够进入新启动的 MCP 服务，避免依赖已有 daemon 启动时保留的环境。launch 快照与父 shell 是不同 ID；父子关系本身不会让 launch 快照自动跟随父快照变化。
+[launch()](src/codex/launch.ts) 先采集环境，再启动 `codex --no-daemon`，把 `CODEX_LSP_CONTEXT_ID` 和 `CODEX_LSP_ENV_MANIFEST` 放入子进程环境。独立宿主进程使绑定能够进入新启动的 MCP 服务，避免依赖已有 daemon 启动时保留的环境。launch 快照与父 shell 是不同 ID；父子关系本身不会让 launch 快照自动跟随父快照变化。
 
 ### 5.2 快照持久化与应用
 
@@ -238,7 +238,7 @@ Hook 请求直接携带配置插值后的 `cwd`、`sessionId`、`toolUseId`，�
        gen-N.json
 ```
 
-[EnvironmentService](packages/lsp-tools-mcp/src/environment/service.ts) 以 MCP 进程环境为底，先删除快照列出的 removed 变量，再覆盖已捕获变量。未列入快照的变量仍可能继承自 MCP 进程；“不保存完整环境”不能理解为子进程只获得白名单变量。
+[EnvironmentService](src/core/environment/service.ts) 以 MCP 进程环境为底，先删除快照列出的 removed 变量，再覆盖已捕获变量。未列入快照的变量仍可能继承自 MCP 进程；“不保存完整环境”不能理解为子进程只获得白名单变量。
 
 ```ts
 const variables = { ...base };
@@ -256,12 +256,12 @@ return variables;
 
 | 工具链            | 当前解析行为                                                                                                   | 实现                                                                     |
 | ----------------- | -------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------ |
-| Python            | 探测实际解释器的 executable、prefix、版本；检查 venv/Conda 与 PATH 一致性；向 Pyright 设置 `python.pythonPath` | [python.ts](packages/lsp-tools-mcp/src/environment/toolchains/python.ts) |
-| Node / TypeScript | 探测 Node 版本，向上查找项目 `node_modules/typescript` 并记录 SDK 路径及版本                                   | [node.ts](packages/lsp-tools-mcp/src/environment/toolchains/node.ts)     |
-| Go                | 用 `GOTOOLCHAIN=local` 执行 `go env`，避免探测阶段下载工具链                                                   | [go.ts](packages/lsp-tools-mcp/src/environment/toolchains/go.ts)         |
-| Rust              | 在项目根探测 rustc、cargo、sysroot，设置 `RUSTUP_AUTO_INSTALL=0`                                               | [rust.ts](packages/lsp-tools-mcp/src/environment/toolchains/rust.ts)     |
-| Java              | 根据 JAVA_HOME/PATH 探测 Java 版本                                                                             | [java.ts](packages/lsp-tools-mcp/src/environment/toolchains/java.ts)     |
-| C/C++             | 探测编译器和项目编译数据库                                                                                     | [cpp.ts](packages/lsp-tools-mcp/src/environment/toolchains/cpp.ts)       |
+| Python            | 探测实际解释器的 executable、prefix、版本；检查 venv/Conda 与 PATH 一致性；向 Pyright 设置 `python.pythonPath` | [python.ts](src/core/environment/toolchains/python.ts) |
+| Node / TypeScript | 探测 Node 版本，向上查找项目 `node_modules/typescript` 并记录 SDK 路径及版本                                   | [node.ts](src/core/environment/toolchains/node.ts)     |
+| Go                | 用 `GOTOOLCHAIN=local` 执行 `go env`，避免探测阶段下载工具链                                                   | [go.ts](src/core/environment/toolchains/go.ts)         |
+| Rust              | 在项目根探测 rustc、cargo、sysroot，设置 `RUSTUP_AUTO_INSTALL=0`                                               | [rust.ts](src/core/environment/toolchains/rust.ts)     |
+| Java              | 根据 JAVA_HOME/PATH 探测 Java 版本                                                                             | [java.ts](src/core/environment/toolchains/java.ts)     |
+| C/C++             | 探测编译器和项目编译数据库                                                                                     | [cpp.ts](src/core/environment/toolchains/cpp.ts)       |
 
 Node 适配器返回的是事实与 fingerprint，没有像 Python 一样在返回值中指定语言服务器设置；“发现了项目 TypeScript SDK”与“强制 tsserver 使用该 SDK”需要区分，后者还取决于服务器自身解析及配置。Go/Rust 的禁止自动安装设置用于探测子进程，不能扩大为所有后续语言服务器子进程都不会下载或执行项目工具。
 
@@ -269,9 +269,9 @@ Node 适配器返回的是事实与 fingerprint，没有像 Python 一样在返�
 
 ### 6.1 配置合并
 
-[ConfigService](packages/lsp-tools-mcp/src/config/loader.ts) 按内置、用户、项目三层加载配置，使用文件修改时间及大小判断是否重新读取。配置采用 `schemaVersion: 1`，未知字段、重复扩展名归属及未知服务器引用会报错。
+[ConfigService](src/core/config/loader.ts) 按内置、用户、项目三层加载配置，使用文件修改时间及大小判断是否重新读取。配置采用 `schemaVersion: 1`，未知字段、重复扩展名归属及未知服务器引用会报错。
 
-同名 `servers` 条目整体替换，`languages` 条目按字段覆盖已有定义；数组随字段替换。工具链推导的 settings 与用户服务器 settings 递归合并，后者优先。替换内置 TypeScript 服务器时必须保留需要的初始化选项，当前内置 `tsserver.useSyntaxServer = "never"` 用于避免项目加载期的单文件语义结果。[内置服务器](packages/lsp-tools-mcp/src/config/builtins.ts)
+同名 `servers` 条目整体替换，`languages` 条目按字段覆盖已有定义；数组随字段替换。工具链推导的 settings 与用户服务器 settings 递归合并，后者优先。替换内置 TypeScript 服务器时必须保留需要的初始化选项，当前内置 `tsserver.useSyntaxServer = "never"` 用于避免项目加载期的单文件语义结果。[内置服务器](src/core/config/builtins.ts)
 
 ```text
  tool input + host context
@@ -291,7 +291,7 @@ Node 适配器返回的是事实与 fingerprint，没有像 Python 一样在返�
 
 ### 6.2 客户端身份
 
-[TargetResolver.server()](packages/lsp-tools-mcp/src/runtime/router.ts) 先查找项目根并解析工具链，再定位语言服务器可执行文件。`slot` 表示同一环境身份、项目和服务器对应的位置；`key` 包含可执行文件、参数、有效环境、服务器配置和工具链指纹：
+[TargetResolver.server()](src/core/runtime/router.ts) 先查找项目根并解析工具链，再定位语言服务器可执行文件。`slot` 表示同一环境身份、项目和服务器对应的位置；`key` 包含可执行文件、参数、有效环境、服务器配置和工具链指纹：
 
 ```ts
 const slot = [
@@ -316,7 +316,7 @@ key: stableHash({
 
 ### 6.3 生命周期与取消
 
-`LspManager` 共享初始化 Promise，并用 `refCount`、`pendingWaiters` 避免在调用仍在使用或等待时做空闲回收。默认空闲回收阈值为五分钟。MCP 请求的取消信号进入工具上下文，LSP 请求通过 `CancellationTokenSource` 转为协议取消；进程退出会主动使在途请求失败。[manager.ts](packages/lsp-tools-mcp/src/lsp/manager.ts)、[client.ts](packages/lsp-tools-mcp/src/lsp/client.ts)
+`LspManager` 共享初始化 Promise，并用 `refCount`、`pendingWaiters` 避免在调用仍在使用或等待时做空闲回收。默认空闲回收阈值为五分钟。MCP 请求的取消信号进入工具上下文，LSP 请求通过 `CancellationTokenSource` 转为协议取消；进程退出会主动使在途请求失败。[manager.ts](src/core/lsp/manager.ts)、[client.ts](src/core/lsp/client.ts)
 
 ```text
  no client --acquire--> initializing --initialize--> ready
@@ -335,13 +335,13 @@ key: stableHash({
 
 ## 7. LSP 文档、能力与语义工具
 
-[LspClient](packages/lsp-tools-mcp/src/lsp/client.ts) 通过 `vscode-jsonrpc` 管理 stdio JSON-RPC，完成 initialize/initialized、配置请求、动态能力注册、诊断发布和进度状态处理。客户端声明 UTF-16 位置编码，支持文档及资源编辑，但明确拒绝语言服务器主动发起的 `workspace/applyEdit`；文件修改由本项目的重命名工具集中发起。
+[LspClient](src/core/lsp/client.ts) 通过 `vscode-jsonrpc` 管理 stdio JSON-RPC，完成 initialize/initialized、配置请求、动态能力注册、诊断发布和进度状态处理。客户端声明 UTF-16 位置编码，支持文档及资源编辑，但明确拒绝语言服务器主动发起的 `workspace/applyEdit`；文件修改由本项目的重命名工具集中发起。
 
-[DocumentStore](packages/lsp-tools-mcp/src/documents/store.ts) 保存每个客户端的文档内容、版本及同步序号。首次访问发送 didOpen，内容变化发送完整文本 didChange，并按服务器声明发送 didSave；服务器不接收 change 时使用关闭再打开的路径。外部文件修改通过已有客户端广播，删除则关闭对应文档。
+[DocumentStore](src/core/documents/store.ts) 保存每个客户端的文档内容、版本及同步序号。首次访问发送 didOpen，内容变化发送完整文本 didChange，并按服务器声明发送 didSave；服务器不接收 change 时使用关闭再打开的路径。外部文件修改通过已有客户端广播，删除则关闭对应文档。
 
-[PositionMapper](packages/lsp-tools-mcp/src/documents/positions.ts) 负责公开坐标与 LSP 坐标转换：工具使用从 1 开始的行号、从 0 开始且按 Unicode code point 计数的列；LSP 使用从 0 开始的行号及 UTF-16 code unit 列。该转换让包含补充平面字符的文件仍能正确定位。当前实现读取不到目标文本时直接沿用列数，属于现存的精度降级路径。
+[PositionMapper](src/core/documents/positions.ts) 负责公开坐标与 LSP 坐标转换：工具使用从 1 开始的行号、从 0 开始且按 Unicode code point 计数的列；LSP 使用从 0 开始的行号及 UTF-16 code unit 列。该转换让包含补充平面字符的文件仍能正确定位。当前实现读取不到目标文本时直接沿用列数，属于现存的精度降级路径。
 
-[LSP_TOOLS](packages/lsp-tools-mcp/src/tools/index.ts) 注册十二个标准工具，根包另外增加两个 Hook 端点：
+[LSP_TOOLS](src/core/tools/index.ts) 注册十二个标准工具，Codex 适配层另外增加两个 Hook 端点：
 
 | 工具组     | 工具                                                                            | 实现要点                                              |
 | ---------- | ------------------------------------------------------------------------------- | ----------------------------------------------------- |
@@ -350,13 +350,13 @@ key: stableHash({
 | 调用层级   | `prepare_call_hierarchy`、`incoming_calls`、`outgoing_calls`                    | 保留 LSP item 的私有 data 与原工作区、环境 ID         |
 | 重命名     | `prepare_rename`、`rename`                                                      | 分离只读准备检查和实际写入                            |
 
-调用层级 handle 是 Base64URL 编码并使用 HMAC-SHA256 签名的 JSON，包含服务器实例、目标配置 key、环境代次身份、工作区、原始 item 及该 item 文件的内容哈希。[call-hierarchy.ts](packages/lsp-tools-mcp/src/tools/call-hierarchy.ts) 在发送后续请求前校验完整性和上下文；服务器重启、环境/配置变化或文件编辑后要求重新 prepare。签名密钥只在当前运行时内存中保存，服务器私有 data 不会被改写。
+调用层级 handle 是 Base64URL 编码并使用 HMAC-SHA256 签名的 JSON，包含服务器实例、目标配置 key、环境代次身份、工作区、原始 item 及该 item 文件的内容哈希。[call-hierarchy.ts](src/core/tools/call-hierarchy.ts) 在发送后续请求前校验完整性和上下文；服务器重启、环境/配置变化或文件编辑后要求重新 prepare。签名密钥只在当前运行时内存中保存，服务器私有 data 不会被改写。
 
 ## 8. 多来源诊断与结果语义
 
 ### 8.1 诊断收集
 
-[checkFiles()](packages/lsp-tools-mcp/src/diagnostics/batch.ts) 先按语言分组，再并行运行每种语言配置的诊断来源。每个来源内部继续按 `ServerTarget.key` 分组，通过管理器获取客户端，每个客户端最多并发检查八个文档。
+[checkFiles()](src/core/diagnostics/batch.ts) 先按语言分组，再并行运行每种语言配置的诊断来源。每个来源内部继续按 `ServerTarget.key` 分组，通过管理器获取客户端，每个客户端最多并发检查八个文档。
 
 ```text
  files
@@ -375,7 +375,7 @@ key: stableHash({
  buildBatch -> counts / coverage / incompleteReasons / truncated
 ```
 
-[DiagnosticService](packages/lsp-tools-mcp/src/diagnostics/service.ts) 同时处理 pull 和 push。支持 pull 时使用 `textDocument/diagnostic`，保留 resultId 以处理 unchanged 返回。支持进度的服务器在每次收集前重新等待后台工作结束，超时结果保留 unconfirmed 状态，并合并同步后的 push 数据，使 rust-analyzer 的后台 cargo check 结果有机会进入同一批次。
+[DiagnosticService](src/core/diagnostics/service.ts) 同时处理 pull 和 push。支持 pull 时使用 `textDocument/diagnostic`，保留 resultId 以处理 unchanged 返回。支持进度的服务器在每次收集前重新等待后台工作结束，超时结果保留 unconfirmed 状态，并合并同步后的 push 数据，使 rust-analyzer 的后台 cargo check 结果有机会进入同一批次。
 
 push 路径用文档同步序号、工作区变化序号及可选的文档版本判断结果是否新鲜。遇到不重复发布相同诊断的服务器，先短暂等待，再重新打开文档请求分析。重新打开前的 barrier 请求用于隔开关闭文档产生的空诊断。此机制依赖具体服务器行为，当前代码还存在 barrier 超时后停止尝试的分支。
 
@@ -398,7 +398,7 @@ push 路径用文档同步序号、工作区变化序号及可选的文档版本
 
 ### 9.1 从编辑事件到诊断批次
 
-[EditFeedback](src/hook/edit-feedback.ts) 将 Codex 事件转换成文件改动和诊断比较。`apply_patch` 从补丁头提取 Add、Update、Delete、Move；前置 Hook 对内容哈希已变化的已有文件建立基线。shell 命令则通过文件监听日志标记时间窗口，并保存窗口开始时的文件集合，以区分创建与原子替换；不解析命令文本。
+[EditFeedback](src/codex/hook/edit-feedback.ts) 将 Codex 事件转换成文件改动和诊断比较。`apply_patch` 从补丁头提取 Add、Update、Delete、Move；前置 Hook 对内容哈希已变化的已有文件建立基线。shell 命令则通过文件监听日志标记时间窗口，并保存窗口开始时的文件集合，以区分创建与原子替换；不解析命令文本。
 
 ```text
  PreToolUse
@@ -430,11 +430,11 @@ push 路径用文档同步序号、工作区变化序号及可选的文档版本
  compare baseline --> additionalContext JSON
 ```
 
-[FileChangeJournal](packages/lsp-tools-mcp/src/workspace/journal.ts) 从工作区根递归建立逐目录 watcher，排除依赖和构建目录，并在新目录出现时继续建立监听。collect 等待 100 ms 接收排队事件，然后按窗口内事件与当前磁盘状态分类。它观察的是时间窗口中的文件系统变化，无法证明每项变化一定由对应 shell 命令造成；并行命令或其他进程写入可能进入同一窗口。
+[FileChangeJournal](src/core/workspace/journal.ts) 从工作区根递归建立逐目录 watcher，排除依赖和构建目录，并在新目录出现时继续建立监听。collect 等待 100 ms 接收排队事件，然后按窗口内事件与当前磁盘状态分类。它观察的是时间窗口中的文件系统变化，无法证明每项变化一定由对应 shell 命令造成；并行命令或其他进程写入可能进入同一窗口。
 
 ### 9.2 基线比较
 
-[BaselineStore](src/hook/baseline.ts) 按会话和文件保存环境身份、内容哈希、成功取得结果的 provider 和诊断。比较使用多重集合差分，指纹由 provider、严重性、代码和消息组成：
+[BaselineStore](src/codex/hook/baseline.ts) 按会话和文件保存环境身份、内容哈希、成功取得结果的 provider 和诊断。比较使用多重集合差分，指纹由 provider、严重性、代码和消息组成：
 
 ```ts
 function fingerprint(diagnostic: BatchDiagnostic): string {
@@ -461,11 +461,11 @@ function fingerprint(diagnostic: BatchDiagnostic): string {
 | 文件监听          | 每工作区 4,096 个目录、20,000 个事件 | 日志层记录不完整原因       |
 | 活跃文件日志      | 4 个工作区                           | 超出后关闭较早使用的日志   |
 
-来源：[edit-feedback.ts](src/hook/edit-feedback.ts)、[baseline.ts](src/hook/baseline.ts)、[constants.ts](packages/lsp-tools-mcp/src/lsp/constants.ts)。
+来源：[edit-feedback.ts](src/codex/hook/edit-feedback.ts)、[baseline.ts](src/codex/hook/baseline.ts)、[constants.ts](src/core/lsp/constants.ts)。
 
 ## 10. 重命名与文件写入
 
-[renameTool](packages/lsp-tools-mcp/src/tools/rename.ts) 在同步目标文档后请求 `textDocument/rename`，将 WorkspaceEdit 交给 [WorkspaceEditCoordinator](packages/lsp-tools-mcp/src/edits/coordinator.ts)。协调器将编辑转换为 text/create/rename/delete 操作，并在内存视图中提前验证文件存在性、已打开文档版本与内容、文本编辑重叠等条件。
+[renameTool](src/core/tools/rename.ts) 在同步目标文档后请求 `textDocument/rename`，将 WorkspaceEdit 交给 [WorkspaceEditCoordinator](src/core/edits/coordinator.ts)。协调器将编辑转换为 text/create/rename/delete 操作，并在内存视图中提前验证文件存在性、已打开文档版本与内容、文本编辑重叠等条件。
 
 ```text
  textDocument/rename
@@ -495,7 +495,7 @@ apply(edit: WorkspaceEdit, origin: LspClient): Promise<WorkspaceEditReport> {
 }
 ```
 
-该队列不锁住外部 shell 或其他 MCP 服务的文件写入，因此工具描述仍要求在调用端串行执行 rename。写入过程中失败会停止后续操作并报告已完成部分，没有回滚。成功后同步语言服务器并执行诊断；根包的 `recordingRename()` 将诊断结果纳入会话基线。文件写入成功与后置诊断完整是两个需要分别检查的状态。
+该队列不锁住外部 shell 或其他 MCP 服务的文件写入，因此工具描述仍要求在调用端串行执行 rename。写入过程中失败会停止后续操作并报告已完成部分，没有回滚。成功后同步语言服务器并执行诊断；适配层的 `recordingRename()` 将诊断结果纳入会话基线。文件写入成功与后置诊断完整是两个需要分别检查的状态。
 
 ## 11. 分阶段修复与实现取舍
 
@@ -503,7 +503,7 @@ apply(edit: WorkspaceEdit, origin: LspClient): Promise<WorkspaceEditReport> {
 
 删除了 `neverIdle` 永久状态。每次 pull 检查重新判断工作区是否空闲；等待超时则继续标为 unconfirmed，后续加载结束可以恢复正常结果。内部 `diagnoseFiles()` 不设输出条数限制，显式 `diagnostics` 工具的展示限制仍由参数控制，因此 Hook 和 rename 的基线不会受 1,000/200 条截断影响。
 
-[编辑反馈](src/hook/edit-feedback.ts) 复查当前工作区全部已打开相关文件，移除了十文件上限。监听不完整、日志已关闭或缺少 PreToolUse 记录时，即使零个文件变化也返回 `additionalContext`；不再提前去重并丢弃告警。未确认结果不更新基线，不产生 resolved 结论。
+[编辑反馈](src/codex/hook/edit-feedback.ts) 复查当前工作区全部已打开相关文件，移除了十文件上限。监听不完整、日志已关闭或缺少 PreToolUse 记录时，即使零个文件变化也返回 `additionalContext`；不再提前去重并丢弃告警。未确认结果不更新基线，不产生 resolved 结论。
 
 ```ts
 if (batch.files.some((file) => file.path === path && file.freshness === "unconfirmed")) {
@@ -511,11 +511,11 @@ if (batch.files.some((file) => file.path === path && file.freshness === "unconfi
 }
 ```
 
-回归测试覆盖连续超时仍不完整、加载完成后恢复、超过 1,000 条诊断、rename 超过 200 条、超过十个相关文件、零变化监听缺口，以及未确认空结果不能清除旧问题。[运行时诊断测试](packages/lsp-tools-mcp/test/diagnostics.test.ts)、[Hook 测试](test/post-edit-hook.test.ts)、[反馈边界测试](test/edit-feedback.test.ts)
+回归测试覆盖连续超时仍不完整、加载完成后恢复、超过 1,000 条诊断、rename 超过 200 条、超过十个相关文件、零变化监听缺口，以及未确认空结果不能清除旧问题。[运行时诊断测试](test/core/diagnostics.test.ts)、[Hook 测试](test/codex/post-edit-hook.test.ts)、[反馈边界测试](test/codex/edit-feedback.test.ts)
 
 ### 11.2 文件归因与上下文一致性
 
-[JournalMark](packages/lsp-tools-mcp/src/workspace/journal.ts) 同时保存事件序号和编辑前文件集合。collect 根据旧集合及当前文件状态区分 changed、created、deleted，不再把所有 rename 事件当成创建。前后 Hook 保持对同一日志实例的引用，实例关闭时显式报告覆盖不完整。
+[JournalMark](src/core/workspace/journal.ts) 同时保存事件序号和编辑前文件集合。collect 根据旧集合及当前文件状态区分 changed、created、deleted，不再把所有 rename 事件当成创建。前后 Hook 保持对同一日志实例的引用，实例关闭时显式报告覆盖不完整。
 
 ```ts
 mark(): JournalMark {
@@ -525,50 +525,55 @@ mark(): JournalMark {
 
 shell 集成将采集和去重集中到 Node 助手及快照存储层，每个提示符重新读取配置，覆盖自定义变量变化及配置修复；无变化时不写磁盘。配置读取异常直接失败，不吞掉 extraVariables。目录变化更新快照元数据。
 
-调用层级使用版本 2 签名句柄，拒绝被修改的数据以及失效的服务器/环境/文件上下文。现有旧格式无需兼容，调用方在失效后重新调用 prepare 即可。[导航测试](packages/lsp-tools-mcp/test/navigation.test.ts) 覆盖嵌套调用、签名修改、服务器重启和文件编辑；[shell 测试](test/shell-integration.test.ts) 覆盖额外变量和失败后配置修复。
+调用层级使用版本 2 签名句柄，拒绝被修改的数据以及失效的服务器/环境/文件上下文。现有旧格式无需兼容，调用方在失效后重新调用 prepare 即可。[导航测试](test/core/navigation.test.ts) 覆盖嵌套调用、签名修改、服务器重启和文件编辑；[shell 测试](test/codex/shell-integration.test.ts) 覆盖额外变量和失败后配置修复。
 
 ### 11.3 进度、状态管理与验收入口
 
-[MCP 服务](packages/lsp-tools-mcp/src/mcp/server.ts) 仅在调用者提供 progressToken 时发送真实工具开始和完成事件，不估算百分比，不伪造后台检查进度。宿主是否显示通知取决于它的 MCP 调用与 UI。取消仍沿原请求信号传递。
+[MCP 服务](src/core/mcp/server.ts) 仅在调用者提供 progressToken 时发送真实工具开始和完成事件，不估算百分比，不伪造后台检查进度。宿主是否显示通知取决于它的 MCP 调用与 UI。取消仍沿原请求信号传递。
 
-新增 [环境管理模块](src/environment/manage.ts) 及 `env list`、`env remove <id>`。删除必须由明确命令触发，不根据年龄推断外部固定环境是否失效，也不在后台删除用户快照。测试只操作临时状态目录。
+新增 [环境管理模块](src/codex/environment/manage.ts) 及 `env list`、`env remove <id>`。删除必须由明确命令触发，不根据年龄推断外部固定环境是否失效，也不在后台删除用户快照。测试只操作临时状态目录。
 
-[主仓库 CI](.github/workflows/ci.yml) 增加真实语言服务器集成 job，并提供手动开启的 Codex 0.163.0 契约 job；后者需要测试账号认证 secret，缺少时明确失败。原有多系统、Node 版本矩阵继续承担跨平台检查。实际执行证据与尚未验证的宿主范围见下一节。
+[CI](.github/workflows/ci.yml) 增加真实语言服务器集成 job，并提供手动开启的 Codex 0.163.0 契约 job；后者需要测试账号认证 secret，缺少时明确失败。原有多系统、Node 版本矩阵继续承担跨平台检查。实际执行证据与尚未验证的宿主范围见下一节。
 
 ## 12. 测试证据、打包与交付边界
 
 ### 12.1 测试分层
 
-| 层次               | 当前测试代码覆盖的意图                            | 验证范围                             |
-| ------------------ | ------------------------------------------------- | ------------------------------------------------ |
-| 纯逻辑与运行时单元 | 配置、坐标、环境、进程管理、诊断及编辑 | 最终全量 91 项通过，包含环境/配置/服务器/文件变化后的句柄失效测试 |
-| 根包 stdio / Hook | 通过 CLI 及假语言服务器验证实际 MCP 封装 | 全量通过 45 项；默认跳过真实 Codex 2 项及缺少 pwsh 的 1 项 |
-| 真实语言服务器集成 | Pyright、Ruff、tsls、gopls、clangd、rust-analyzer | 本机真实服务器集成 25 项通过           |
-| 制品检查           | 构建后部署、移出源树、连接 MCP 并列出工具         | 本轮移出源树后成功发现 14 个工具         |
-| 真实 Codex 契约 | 安装插件后验证 apply_patch、shell 和 venv 启动 | 本轮显式启用后 2/2 通过；使用隔离 CODEX_HOME |
-| 静态检查 | TypeScript、Biome、补丁空白、CI YAML 和文档引用 | 本轮通过；远端工作流尚未触发 |
+| 层次 | 当前测试覆盖 | 验证范围 |
+| --- | --- | --- |
+| 单元与 Codex 适配 | 配置、坐标、环境、进程、诊断、编辑、Hook 和单包布局 | 合并后 137 项通过；默认跳过真实 Codex 2 项及缺少 pwsh 的 1 项 |
+| 真实语言服务器集成 | Pyright、Ruff、TypeScript 6/7、gopls、clangd、rust-analyzer | 合并后 29 项通过，含 TypeScript 7 原生 LSP/编译器的 4 项测试 |
+| 制品检查 | 生产依赖安装、移出源树、连接 MCP 并列出工具 | 单包制品成功发现 14 个工具，不包含独立运行时包和开发 SDK |
+| 真实 Codex 契约 | 安装插件后验证 apply_patch、shell 和 venv 启动 | 整合后在隔离 CODEX_HOME 中验证最终制品，2/2 通过 |
+| 静态检查 | TypeScript 7、Biome、补丁空白、CI YAML 和文档引用 | 本机执行；远端工作流尚未触发 |
 
-[真实宿主测试](test/codex-contract.test.ts) 使用临时 CODEX_HOME，安装 staged plugin，读取会话记录检查诊断反馈。它只有两个场景，且通过 `--dangerously-bypass-hook-trust` 绕过本次运行的 Hook 信任检查，因此并未覆盖交互式信任授权流程。主仓库通过手动 workflow_dispatch 输入 codex_contract 启用宿主契约测试，并通过独立 integration job 直接调用子模块真实服务器测试。[主仓库 CI](.github/workflows/ci.yml)、[子模块 CI](packages/lsp-tools-mcp/.github/workflows/ci.yml)
+[真实宿主测试](test/codex/codex-contract.test.ts) 使用临时 CODEX_HOME，安装 staged plugin，读取会话记录检查诊断反馈。它只有两个场景，且通过 `--dangerously-bypass-hook-trust` 绕过本次运行的 Hook 信任检查，因此并未覆盖交互式信任授权流程。主仓库通过手动 workflow_dispatch 输入 codex_contract 启用宿主契约测试，并通过 integration job 执行 TypeScript 6/7 等真实服务器测试。[CI](.github/workflows/ci.yml)
 
-仓库已有交接记录称：上次 Linux 检查中，子模块单元测试 82 项、真实服务器集成 25 项、根包测试 34 项，另行执行的 Codex 契约测试 2/2 通过；远端 CI 尚未运行。这些是修复前的历史记录，本轮结果单独列在上表。macOS、Windows、PowerShell、桌面宿主、部分工具链切换及大型项目性能仍存在验证缺口。来源文件为本地 `handoff-1015.md` 和 `todo-codex-lsp-upgrade.md` 第 11 节；它们在本次审查时未被 Git 跟踪，不作为正式制品的必备文件。
+验证平台为 Linux、Node 24 和 Codex CLI 0.163.0。macOS、Windows、PowerShell、桌面宿主、部分工具链切换及大型项目性能仍需对应环境验证；CI 配置与本机执行结果分开记录。
 
-### 12.2 制品布局
+### 12.2 单包构建与制品布局
 
-[package-plugin.mjs](scripts/package-plugin.mjs) 使用 `pnpm deploy` 生成 hoisted、无符号链接的生产依赖目录，检查必须文件及禁止打包的开发工具，并在源树外验证 MCP 工具发现。这样做依据仓库已有的 Codex 安装验证：插件复制过程会丢弃符号链接，直接复制 pnpm 源码工作区不足以形成完整制品。
+根 `package.json` 直接声明 MCP SDK、JSON-RPC、LSP 协议和 Zod 依赖，不再引用工作区包或外部运行时版本。`pnpm install --frozen-lockfile` 使用唯一的根锁文件。`scripts/build.mjs` 清理旧 `dist/`，再明确调用 TypeScript 7 编译器，避免迁移前路径残留或 TypeScript 6 测试 SDK 的同名命令影响构建。
+
+[package-plugin.mjs](scripts/package-plugin.mjs) 复制包清单指定的分发文件及根锁文件，在制品目录执行 pnpm 生产依赖安装，使用 hoisted 布局、禁用安装脚本，并移除 `.bin` 符号链接。随后检查制品无符号链接且不含开发工具，复制到源码目录外验证 MCP 发现。使用文档与设计文档随包分发。
 
 ```text
- source workspace
-   codex-lsp + packages/lsp-tools-mcp
+ one package.json + pnpm-lock.yaml
                   |
-             build:all
+             pnpm run build
                   |
-       pnpm deploy (hoisted)
+                  v
+ dist/cli.js + dist/codex/ + dist/core/
+                  |
+       stage declared package files
+                  |
+       pnpm install --prod --frozen-lockfile
                   |
                   v
  artifacts/codex-lsp-plugin/
    .codex-plugin/plugin.json
    .mcp.json
-   hooks/  skills/  shell/
+   hooks/  skills/  shell/  docs/
    dist/
    node_modules/
                   |
@@ -577,16 +582,20 @@ shell 集成将采集和去重集中到 Node 助手及快照存储层，每个�
            MCP tools/list check
 ```
 
-语言服务器没有随插件打包，仍需存在于目标环境。npm 发布路径还依赖匹配版本的 `@code-yeongyu/lsp-tools-mcp` 已发布；[发布工作流](.github/workflows/publish.yml) 对此做了检查。源码可读、局部测试曾通过、staged plugin 可启动和 npm 版本已发布，是四个不同的交付状态。
+生产制品不包含语言服务器或 TypeScript 开发 SDK。TypeScript 7 是编译器及原生 LSP 测试依赖，`typescript6` 别名只为 TypeScript 6 的真实测试提供明确 SDK；二者不会进入生产依赖。根发布流程只发布当前包，不再要求先发布单独的运行时。[发布工作流](.github/workflows/publish.yml)
+
+### 12.3 TypeScript 7 真实验证
+
+[test/integration/typescript7.test.ts](test/integration/typescript7.test.ts) 直接使用已固定的 TypeScript 7.0.2 `bin/tsc --lsp --stdio` 启动原生服务，并断言启动参数及服务器报告的 7.x 版本。四个真实场景覆盖：类型错误出现与编辑后消失、跨文件定义/引用/悬停/重命名、调用层级往返、编译器错误退出与修复后的成功退出。TypeScript 6 仍通过 typescript-language-server 配合单独样例 SDK 验证，不作为 TypeScript 7 失败时的替代路径。
 
 ## 13. 阅读与维护索引
 
 | 关注点               | 首先阅读                                                                                                  | 随后阅读                                                                                                                 |
 | -------------------- | --------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
-| Codex 接入           | [插件清单](.codex-plugin/plugin.json)、[Hook 配置](hooks/hooks.json)                                      | [CLI](src/cli.ts)、[上下文适配](src/codex-context.ts)、[Hook 工具](src/hook/tools.ts)                                    |
-| 环境错误             | [绑定](src/environment/binding.ts)、[采集](src/environment/capture.ts)                                    | [快照](packages/lsp-tools-mcp/src/environment/snapshot.ts)、[工具链](packages/lsp-tools-mcp/src/environment/toolchains/) |
-| 服务器选错或重复启动 | [配置](packages/lsp-tools-mcp/src/config/loader.ts)、[路由](packages/lsp-tools-mcp/src/runtime/router.ts) | [管理器](packages/lsp-tools-mcp/src/lsp/manager.ts)                                                                      |
-| 漏报或陈旧诊断       | [诊断服务](packages/lsp-tools-mcp/src/diagnostics/service.ts)                                             | [文档同步](packages/lsp-tools-mcp/src/documents/store.ts)、[批次聚合](packages/lsp-tools-mcp/src/diagnostics/batch.ts)   |
-| 自动反馈归因错误     | [编辑反馈](src/hook/edit-feedback.ts)、[基线](src/hook/baseline.ts)                                       | [补丁解析](src/hook/apply-patch.ts)、[文件日志](packages/lsp-tools-mcp/src/workspace/journal.ts)                         |
-| 重命名落盘           | [rename 工具](packages/lsp-tools-mcp/src/tools/rename.ts)                                                 | [编辑协调器](packages/lsp-tools-mcp/src/edits/coordinator.ts)                                                            |
+| Codex 接入           | [插件清单](.codex-plugin/plugin.json)、[Hook 配置](hooks/hooks.json)                                      | [CLI](src/cli.ts)、[上下文适配](src/codex/context.ts)、[Hook 工具](src/codex/hook/tools.ts)                                    |
+| 环境错误             | [绑定](src/codex/environment/binding.ts)、[采集](src/codex/environment/capture.ts)                                    | [快照](src/core/environment/snapshot.ts)、[工具链](src/core/environment/toolchains/) |
+| 服务器选错或重复启动 | [配置](src/core/config/loader.ts)、[路由](src/core/runtime/router.ts) | [管理器](src/core/lsp/manager.ts)                                                                      |
+| 漏报或陈旧诊断       | [诊断服务](src/core/diagnostics/service.ts)                                             | [文档同步](src/core/documents/store.ts)、[批次聚合](src/core/diagnostics/batch.ts)   |
+| 自动反馈归因错误     | [编辑反馈](src/codex/hook/edit-feedback.ts)、[基线](src/codex/hook/baseline.ts)                                       | [补丁解析](src/codex/hook/apply-patch.ts)、[文件日志](src/core/workspace/journal.ts)                         |
+| 重命名落盘           | [rename 工具](src/core/tools/rename.ts)                                                 | [编辑协调器](src/core/edits/coordinator.ts)                                                            |
 | 用户配置和能力说明   | [使用文档目录](docs/README.md)                                                                            | [工具](docs/tools.md)、[环境](docs/environments.md)、[故障排查](docs/troubleshooting.md)                                 |

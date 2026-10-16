@@ -2,28 +2,14 @@
 
 ## Unreleased
 
+- Consolidate the Codex adapter and LSP runtime into one pnpm package: `src/codex/` and `src/core/`, with one executable, lockfile, build, test configuration, and release pipeline.
+- Package the core directly with production dependencies; include usage and design documentation, and verify the plugin outside the source tree without symlinks or a separately published runtime.
+- Build with TypeScript 7 and run real TypeScript 6 and TypeScript 7 native LSP/compiler tests, alongside Pyright, Ruff, gopls, clangd, and rust-analyzer.
 - Preserve complete edit/rename diagnostic baselines, retain old baselines for unconfirmed results, and recheck every open related file.
-- Report incomplete file tracking even with no changes; distinguish atomic replacement from file creation.
-- Capture current configuration and extra variables at every prompt, report capture failures, and add `env list` / `env remove` for explicit snapshot management.
-- Bind signed call hierarchy handles to server instances, configurations, environment generations and file contents; emit requested MCP start/completion notifications.
-- Add main-repository real-server CI and a manually enabled authenticated Codex contract job.
-
-- Usage documentation in `docs/` (installation, shell environments, post-edit diagnostics, tools, configuration, troubleshooting); the README now links to it.
-- Picks up the runtime's Rust fixes: the first rust-analyzer check waits for workspace loading instead of reporting an empty result, `cargo check` errors are merged in, and dynamically registered `didSave` is honoured.
-- Development and CI use a pnpm workspace that includes the `lsp-tools-mcp` submodule through `workspace:*`.
-- The plugin uses the Codex compat layout (`.codex-plugin/plugin.json` + `.mcp.json`) and is staged by `pnpm run test:package` with a hoisted, link-free `node_modules`.
-- The MCP entry is the root CLI; it serves the `2026-07-28` MCP revision and reads the workspace from Codex turn metadata.
-- Picks up the runtime's config schema v1, multi-source diagnostics, and shell-environment binding; `pnpm run test:integration` runs the real-language-server suite.
-- Adds `lsp.hover`, `lsp.goto_implementation`, and call hierarchy tools (`lsp.prepare_call_hierarchy`, `lsp.incoming_calls`, `lsp.outgoing_calls`); TypeScript navigation no longer returns single-file results while the project loads.
-- `pnpm run test:package` builds both packages before staging so the artifact never ships a stale runtime.
-- Post-edit diagnostics run inside the long-lived MCP process through native `mcp_tool` hooks (`pre_edit_snapshot` on PreToolUse, `post_edit_diagnostics` on PostToolUse) for `apply_patch` and `Bash`, replacing the `hook post-tool-use` command that started language servers per edit.
-- apply_patch Add/Update/Delete/Move are all handled; shell edits come from a workspace file-change journal; results are diffed against a per-session baseline (new, resolved, first check) and reported as `additionalContext` without blocking the edit.
-- Errors and warnings are reported by default; provider failures are always reported.
-- The MCP process binds the launcher's environment from `CODEX_LSP_CONTEXT_ID` / `CODEX_LSP_ENV_MANIFEST` (validated; the manifest path names the state directory).
-- `test/codex-contract.test.ts` (`CODEX_LSP_CONTRACT=1`) checks the hook contract and the launcher in real Codex sessions.
-- `codex-lsp launch` captures the shell's environment and starts `codex --no-daemon` bound to it; `codex-lsp env shell-init bash|zsh|pwsh` keeps a per-shell snapshot current at each prompt; `codex-lsp env capture --kind command` snapshots a command's environment for `environmentId`; `codex-lsp config mcp` prints reviewable config for use without the plugin.
-- The `hook post-tool-use` command and its fixtures are removed; the README's `install-local.mjs` instructions are replaced by the verified `codex plugin marketplace add` / `codex plugin add` flow.
-- CI installs zsh for the shell integration tests; pwsh is tested on the CI runners.
+- Re-evaluate background progress after timeouts; report incomplete tracking even with no file changes, and distinguish atomic replacements from new files.
+- Capture current shell configuration and extra variables at every prompt, report capture failures, and provide explicit `env list` / `env remove` snapshot management.
+- Sign call hierarchy handles and bind them to server instances, configurations, environment generations, and file contents; emit requested MCP start/completion notifications.
+- Keep the Codex compatibility plugin layout and `2026-07-28` MCP revision, including native PreToolUse/PostToolUse hooks and a manually enabled authenticated Codex CI contract.
 
 ## 0.2.0
 

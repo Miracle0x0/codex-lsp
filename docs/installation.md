@@ -21,12 +21,11 @@ Other languages have built-in routes too; `lsp.status` lists every configured se
 From a checkout of this repository:
 
 ```bash
-git submodule update --init --recursive
 pnpm install --frozen-lockfile
 pnpm run test:package
 ```
 
-`test:package` builds both packages and stages a self-contained plugin in `artifacts/codex-lsp-plugin/` with a flat (hoisted) `node_modules`. Codex drops symbolic links when it installs a plugin, so install from this staged directory, not from the source tree.
+`test:package` builds the single package and stages its distributable files in `artifacts/codex-lsp-plugin/`. It installs production dependencies from the root lockfile with a flat (hoisted) `node_modules`, then verifies the relocated plugin. Codex drops symbolic links when it installs a plugin, so install from this staged directory, not from the source tree.
 
 ## Install into Codex
 
@@ -89,7 +88,7 @@ If either step fails, see [Troubleshooting](troubleshooting.md).
 | `hooks/hooks.json` | `mcp_tool` hooks on `apply_patch` and `Bash` (see [Post-edit diagnostics](post-edit-diagnostics.md)) |
 | `skills/lsp/SKILL.md` | Guidance Codex reads about when and how to use the tools |
 | `shell/` | Shell integration templates (see [Shell environments](environments.md)) |
-| `dist/`, `node_modules/` | The runtime and its Node dependencies |
+| `dist/`, `node_modules/` | The CLI, `codex/` adapter, `core/` runtime, and their production dependencies |
 
 ## Using codex-lsp without the plugin system
 
@@ -103,4 +102,4 @@ Hooks configured this way also need to be trusted in Codex.
 
 ## Validation in CI
 
-The main repository CI runs real-language-server integration alongside its operating-system and Node unit/package matrix. For real Codex tests, manually start `ci` with `codex_contract` enabled and configure the repository secret `CODEX_AUTH_JSON` with the test account's authentication JSON. The job uses Codex 0.163.0, builds the plugin, runs the host contract cases in temporary Codex homes, and removes its temporary authentication file. Missing authentication fails the requested job. The contract bypasses Hook trust for its isolated invocations; interactive trust and desktop/IDE behavior require separate host verification.
+CI runs real-language-server integration alongside its operating-system and Node unit/package matrix. TypeScript tests exercise both the pinned TypeScript 6 SDK through typescript-language-server and the pinned TypeScript 7 native LSP and compiler. For real Codex tests, manually start `ci` with `codex_contract` enabled and configure the repository secret `CODEX_AUTH_JSON` with the test account's authentication JSON. The job uses Codex 0.163.0, builds the plugin, runs the host contract cases in temporary Codex homes, and removes its temporary authentication file. Missing authentication fails the requested job. The contract bypasses Hook trust for its isolated invocations; interactive trust and desktop/IDE behavior require separate host verification.

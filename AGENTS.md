@@ -15,14 +15,21 @@ Conventions for humans and agents working on this repository.
 
 ## Commands
 
-- `git submodule update --init --recursive` checks out the `lsp-tools-mcp` runtime.
-- `pnpm install --frozen-lockfile` installs the workspace (root + runtime submodule).
-- `pnpm run build:all` builds the runtime and the Codex adapter in dependency order.
-- `pnpm run check:all` runs typecheck and Biome in both packages.
-- `pnpm run test:all` runs both test suites once.
-- `pnpm run test:integration` runs the runtime against real language servers (Pyright, Ruff, typescript-language-server, gopls, clangd, rust-analyzer); a missing server fails the run.
-- `pnpm run test:package` builds both packages, stages the plugin with `pnpm deploy` (hoisted, no symlinks), and starts it outside the source tree.
-- `CODEX_LSP_CONTRACT=1 pnpm exec vitest --run test/codex-contract.test.ts` drives real Codex in a temporary `CODEX_HOME` (needs network and Codex auth; run `test:package` first, set `CODEX_LSP_CONTRACT_KEEP=1` to keep the files).
+- `pnpm install --frozen-lockfile` installs this single package from the root lockfile.
+- `pnpm run build` cleans `dist/` and builds `src/cli.ts`, `src/codex/`, and `src/core/` with TypeScript 7.
+- `pnpm run check` runs typecheck and Biome.
+- `pnpm test` runs the core and Codex adapter suites once.
+- `pnpm run test:integration` runs real Pyright, Ruff, TypeScript 6 via typescript-language-server, TypeScript 7 native LSP/compiler, gopls, clangd, and rust-analyzer. Required servers must be present; TypeScript SDKs are pinned dev dependencies.
+- `pnpm run test:package` builds and stages a self-contained plugin, installs its production dependencies with pnpm (hoisted, no symlinks), and starts it outside the source tree.
+- `CODEX_LSP_CONTRACT=1 pnpm run test:contract` drives real Codex in a temporary `CODEX_HOME` (needs network and Codex auth; run `test:package` first, set `CODEX_LSP_CONTRACT_KEEP=1` to keep the files).
+
+## Source Layout
+
+- `src/cli.ts` is the only executable entry and composes the core and Codex adapter.
+- `src/core/` owns MCP/LSP, configuration, diagnostics, documents, edits, and environment snapshots. It must not import the Codex adapter.
+- `src/codex/` owns Codex metadata, hooks, shell capture, launch, and config output.
+- `test/core/`, `test/codex/`, and `test/integration/` keep unit/host and real-server coverage separate.
+- `typescript` is the TypeScript 7 compiler and native LSP used by integration tests; `typescript6` is a development-only test SDK for the TypeScript 6 server. Neither is bundled into the plugin.
 
 ## LSP Constraints
 

@@ -1,0 +1,259 @@
+import * as z from "zod";
+
+import { ConfigError, type EffectiveConfig } from "../config/loader.js";
+import type { EnvironmentContext } from "../environment/service.js";
+import { findExecutable } from "../lsp/command.js";
+import type { ToolCallContext } from "../runtime/context.js";
+import { findProjectRoot } from "../runtime/router.js";
+import type { LspRuntime } from "../runtime/runtime.js";
+import { defineLspTool } from "./definition.js";
+import { WorkspaceInputShape } from "./schemas.js";
+
+const ToolchainSchema = z.object({
+	kind: z.string(),
+	status: z.enum(["resolved", "unavailable"]),
+	source: z.string(),
+	summary: z.string(),
+	facts: z.record(z.string(), z.string().nullable()),
+	notes: z.array(z.string()),
+	problem: z.string().optional(),
+});
+
+const StatusOutputSchema = z.object({
+	workspaceRoot: z.string().nullable(),
+	configError: z.array(z.object({ file: z.string(), path: z.string(), message: z.string() })).optional(),
+	configFiles: z
+		.object({
+			user: z.object({ path: z.string(), loaded: z.boolean() }),
+			project: z.object({ path: z.string(), loaded: z.boolean() }).nullable(),
+		})
+		.optional(),
+	environment: z
+		.object({
+			environmentId: z.string().nullable(),
+			generation: z.number().int().nullable(),
+			source: z.string(),
+			capturedAt: z.string().nullable(),
+			notes: z.array(z.string()),
+		})
+		.optional(),
+	servers: z.array(
+		z.object({
+			id: z.string(),
+			source: z.string(),
+			state: z.enum(["installed", "missing", "disabled"]),
+			command: z.array(z.string()),
+			executable: z.string().nullable(),
+		}),
+	),
+	languages: z.array(
+		z.object({
+			id: z.string(),
+			extensions: z.array(z.string()),
+			semanticServer: z.string().nullable(),
+			diagnosticServers: z.array(z.string()),
+			disabledServers: z.array(z.string()),
+			toolchain: z.string().nullable(),
+		}),
+	),
+	file: z
+		.object({
+			path: z.string(),
+			language: z.string(),
+			projectRoots: z.array(z.object({ serverId: z.string(), projectRoot: z.string() })),
+			toolchain: ToolchainSchema.nullable(),
+		})
+		.optional(),
+	clients: z.array(
+		z.object({
+			key: z.string(),
+			serverId: z.string(),
+			projectRoot: z.string(),
+			state: z.enum(["initializing", "ready", "dead", "retired"]),
+			environmentId: z.string().nullable(),
+			environmentGeneration: z.number().int().nullable(),
+			environmentSource: z.string(),
+			executable: z.string(),
+			toolchain: z.string().nullable(),
+			serverInfo: z.string().nullable(),
+			refCount: z.number().int(),
+			openDocuments: z.number().int(),
+		}),
+	),
+});
+
+type StatusOutput = z.infer<typeof StatusOutputSchema>;
+
+function describeServers(config: EffectiveConfig, environment: EnvironmentContext): StatusOutput["servers"] {
+	const servers: StatusOutput["servers"] = [...config.servers.values()].map((server) => {
+		const executable = server.command[0]
+			? (findExecutable(server.command[0], environment.variables, config.workspaceRoot) ?? null)
+			: null;
+		return {
+			id: server.id,
+			source: server.source,
+			state: executable === null ? "missing" : "installed",
+			command: [...server.command],
+			executable,
+		};
+	});
+	for (const [id, source] of config.disabledServers) {
+		servers.push({ id, source, state: "disabled", command: [], executable: null });
+	}
+	return servers;
+}
+
+async function describeFile(
+	runtime: LspRuntime,
+	filePath: string,
+	input: { workspaceRoot?: string | undefined; environmentId?: string | undefined },
+	context: ToolCallContext,
+): Promise<StatusOutput["file"]> {
+	const file = runtime.file({ ...input, filePath }, context);
+	const serverIds = [
+		...new Set([
+			...(file.language.semanticServer ? [file.language.semanticServer] : []),
+			...file.language.diagnosticServers,
+		]),
+	];
+	const projectRoots = serverIds.flatMap((serverId) => {
+		const server = file.config.servers.get(serverId);
+		return server
+			? [{ serverId, projectRoot: findProjectRoot(file.path, server.rootMarkers, file.workspaceRoot) }]
+			: [];
+	});
+	const firstRoot = projectRoots[0]?.projectRoot;
+	const toolchain =
+		file.language.toolchain && firstRoot !== undefined
+			? await runtime.resolver.toolchain(file.language.toolchain, file, firstRoot, context.signal)
+			: null;
+	return {
+		path: file.path,
+		language: file.language.id,
+		projectRoots,
+		toolchain:
+			toolchain === null
+				? null
+				: {
+						kind: toolchain.kind,
+						status: toolchain.status,
+						source: toolchain.source,
+						summary: toolchain.summary,
+						facts: { ...toolchain.facts },
+						notes: [...toolchain.notes],
+						...(toolchain.problem === undefined ? {} : { problem: toolchain.problem }),
+					},
+	};
+}
+
+function summarize(status: StatusOutput): string {
+	const lines: string[] = [`Workspace: ${status.workspaceRoot ?? "(none)"}`];
+	if (status.configError) {
+		lines.push(
+			"Configuration is invalid:",
+			...status.configError.map((issue) => `  ${issue.file}: ${issue.path}: ${issue.message}`),
+		);
+	}
+	if (status.configFiles) {
+		const project = status.configFiles.project;
+		lines.push(
+			`Config: user ${status.configFiles.user.path} (${status.configFiles.user.loaded ? "loaded" : "absent"})` +
+				(project ? `, project ${project.path} (${project.loaded ? "loaded" : "absent"})` : ""),
+		);
+	}
+	if (status.environment) {
+		const environment = status.environment;
+		lines.push(
+			`Environment: ${environment.source}${environment.environmentId ? ` ${environment.environmentId}#${environment.generation}` : ""}`,
+			...environment.notes.map((note) => `  ${note}`),
+		);
+	}
+	if (status.file) {
+		lines.push(`File: ${status.file.path} (${status.file.language})`);
+		for (const root of status.file.projectRoots) lines.push(`  ${root.serverId} project root: ${root.projectRoot}`);
+		const toolchain = status.file.toolchain;
+		if (toolchain) {
+			lines.push(`  ${toolchain.kind} toolchain: ${toolchain.status}; ${toolchain.summary} [${toolchain.source}]`);
+			lines.push(...toolchain.notes.map((note) => `  note: ${note}`));
+		}
+	}
+	const routed = new Set(
+		status.languages.flatMap((language) => [language.semanticServer, ...language.diagnosticServers]),
+	);
+	lines.push("Routed servers:");
+	for (const server of status.servers.filter(
+		(item) => routed.has(item.id) || item.state === "disabled" || item.source !== "builtin",
+	)) {
+		lines.push(
+			`  ${server.id}: ${server.state}${server.executable ? ` (${server.executable})` : ""}; source=${server.source}`,
+		);
+	}
+	lines.push(`Active clients: ${status.clients.length}`);
+	for (const client of status.clients) {
+		lines.push(
+			`  ${client.serverId}: ${client.state}; root=${client.projectRoot}; env=${client.environmentId ?? client.environmentSource}` +
+				`${client.environmentGeneration === null ? "" : `#${client.environmentGeneration}`}; ${client.serverInfo ?? client.executable}` +
+				`${client.toolchain ? `; ${client.toolchain}` : ""}`,
+		);
+	}
+	return lines.join("\n");
+}
+
+export const statusTool = defineLspTool({
+	name: "status",
+	title: "LSP Status",
+	description:
+		"Show configuration, the bound shell environment, server executables, language routes, and active clients. " +
+		"With filePath it also resolves that file's toolchain (interpreter/SDK) without starting a language server.",
+	annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
+	inputSchema: z.object({
+		...WorkspaceInputShape,
+		filePath: z.string().min(1).optional().describe("File whose language, project root, and toolchain to resolve."),
+	}),
+	outputSchema: StatusOutputSchema,
+	async run(runtime, input, context) {
+		const workspaceRoot = runtime.workspaceRoot(input, context) ?? null;
+		const clients = runtime.manager.snapshot().map(({ pid: _pid, ...client }) => client);
+		let config: EffectiveConfig;
+		try {
+			config = runtime.resolver.config(workspaceRoot ?? undefined);
+		} catch (error) {
+			if (!(error instanceof ConfigError)) throw error;
+			const status: StatusOutput = {
+				workspaceRoot,
+				configError: error.issues.map((issue) => ({ ...issue })),
+				servers: [],
+				languages: [],
+				clients,
+			};
+			return { summary: summarize(status), data: status, partial: true };
+		}
+		const environment = runtime.resolver.environment(config, runtime.environmentId(input, context));
+		const status: StatusOutput = {
+			workspaceRoot,
+			configFiles: {
+				user: { ...config.files.user },
+				project: config.files.project ? { ...config.files.project } : null,
+			},
+			environment: {
+				environmentId: environment.environmentId,
+				generation: environment.generation,
+				source: environment.source,
+				capturedAt: environment.capturedAt,
+				notes: [...environment.notes],
+			},
+			servers: describeServers(config, environment),
+			languages: [...config.languages.values()].map((language) => ({
+				id: language.id,
+				extensions: [...language.extensions],
+				semanticServer: language.semanticServer,
+				diagnosticServers: [...language.diagnosticServers],
+				disabledServers: [...language.disabledServers],
+				toolchain: language.toolchain,
+			})),
+			...(input.filePath === undefined ? {} : { file: await describeFile(runtime, input.filePath, input, context) }),
+			clients,
+		};
+		return { summary: summarize(status), data: status };
+	},
+});

@@ -136,4 +136,26 @@ Languages merge field by field across layers; arrays are replaced, not appended.
 | Ruby, Elixir, Zig, C#, F#, Swift | | `ruby-lsp`, `elixir-ls`, `zls`, `csharp`, `fsharp`, `sourcekit-lsp` |
 | Shell, YAML, Lua, and more | | `bash`, `yaml-ls`, `lua-ls`, ... |
 
-Additional built-in server definitions that no language uses by default include `ruff`, `basedpyright`, `ty`, `eslint`, `oxlint`, `biome`, and `deno`; route a language to them as in the examples. `lsp.status` prints the complete effective list. The full schema and merge rules are also documented in the [runtime README](../packages/lsp-tools-mcp/README.md#configuration).
+Additional built-in server definitions that no language uses by default include `ruff`, `basedpyright`, `ty`, `eslint`, `oxlint`, `biome`, and `deno`; route a language to them as in the examples. `lsp.status` prints the complete effective list. The [schema](../src/core/config/schema.ts) and [configuration loader](../src/core/config/loader.ts) define validation and merge behavior.
+
+## TypeScript 7 native LSP
+
+The default TypeScript route uses `typescript-language-server`. To use TypeScript 7's native LSP, explicitly configure its project-installed compiler entry; it runs with `--lsp --stdio`. Use an absolute compiler path so monorepo root selection does not change which installation is launched:
+
+```json
+{
+	"schemaVersion": 1,
+	"servers": {
+		"typescript7": {
+			"command": ["node", "/absolute/project/node_modules/typescript/bin/tsc", "--lsp", "--stdio"],
+			"rootMarkers": ["tsconfig.json", "jsconfig.json", "package.json"]
+		}
+	},
+	"languages": {
+		"typescript": { "semanticServer": "typescript7", "diagnosticServers": ["typescript7"] },
+		"javascript": { "semanticServer": "typescript7", "diagnosticServers": ["typescript7"] }
+	}
+}
+```
+
+This route starts the selected TypeScript 7 installation directly; a failed launch or unsupported capability is reported. The real integration suite checks its reported server version, diagnostics after edits, cross-file navigation and rename, call hierarchy, and compiler errors. The native entry flags are defined in [Microsoft's LSP entry](https://github.com/microsoft/typescript-go/blob/main/cmd/tsgo/lsp.go).

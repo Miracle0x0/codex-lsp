@@ -1,3 +1,4 @@
 codex-lsp ports the standalone LSP runtime from pi-lsp-client into a Codex plugin.
 
-The package includes adapted code originally developed for pi-lsp-client.
+The package includes adapted code originally developed for pi-lsp-client and
+lsp-tools-mcp, maintained here under src/core/ together with the Codex adapter.

@@ -20,8 +20,6 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6
-        with:
-          submodules: recursive
 
       - name: Setup pnpm and Node 24
         uses: pnpm/setup@c9883cc79df532ad1a7b81bf9ab944ceb090d65c # v2.0.0
@@ -30,17 +28,17 @@ jobs:
           cache: true
           install: false
 
-      - name: Install workspace
+      - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
       - name: Build
-        run: pnpm run build:all
+        run: pnpm run build
 
       - name: Check
-        run: pnpm run check:all
+        run: pnpm run check
 
       - name: Unit tests
-        run: pnpm run test:all
+        run: pnpm run test
 
       - name: Plugin package
         run: pnpm run test:package
@@ -49,11 +47,6 @@ jobs:
         run: |
           if [ -z "$NODE_AUTH_TOKEN" ]; then
             echo "NODE_AUTH_TOKEN is not configured; refusing to report a successful release." >&2
-            exit 1
-          fi
-          runtime_version=$(node -p "require('./packages/lsp-tools-mcp/package.json').version")
-          if ! pnpm view "@code-yeongyu/lsp-tools-mcp@${runtime_version}" version >/dev/null 2>&1; then
-            echo "@code-yeongyu/lsp-tools-mcp@${runtime_version} is not published; publish the runtime first." >&2
             exit 1
           fi
           printf '//registry.npmjs.org/:_authToken=%s\n' "$NODE_AUTH_TOKEN" > "$RUNNER_TEMP/.npmrc"

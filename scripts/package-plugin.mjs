@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Build a self-contained Codex plugin directory from the workspace.
+// Stage a self-contained Codex plugin from this single package and its production dependencies.
 //
 // Codex copies an installed plugin into its cache without symbolic links, so the
 // staged directory must use a hoisted node_modules layout and contain no links.
@@ -10,7 +10,7 @@
 // --verify copies the staged plugin to a fresh directory outside the source tree
 // and checks that the MCP entry answers a 2026-07-28 client from there.
 import { spawnSync } from "node:child_process";
-import { cpSync, existsSync, lstatSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
+import { cpSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -19,7 +19,6 @@ import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const packageName = "@code-yeongyu/codex-lsp";
 const requiredFiles = [
 	".codex-plugin/plugin.json",
 	".mcp.json",
@@ -29,9 +28,11 @@ const requiredFiles = [
 	"shell/codex-lsp.zsh",
 	"shell/codex-lsp.ps1",
 	"dist/cli.js",
-	"node_modules/@code-yeongyu/lsp-tools-mcp/package.json",
+	"dist/core/index.js",
+	"dist/codex/context.js",
+	"docs/README.md",
 ];
-const forbiddenPackages = ["typescript", "vitest", "@biomejs/biome", "pyright", "typescript-language-server"];
+const forbiddenPackages = ["@code-yeongyu/lsp-tools-mcp", "typescript", "typescript6", "vitest", "@biomejs/biome", "pyright", "typescript-language-server"];
 const deployMetadata = ["pnpm-lock.yaml", "pnpm-workspace.yaml"];
 
 function parseArgs(argv) {
@@ -57,22 +58,28 @@ function fail(message) {
 	process.exit(1);
 }
 
-function requireBuiltWorkspace() {
-	const builtEntries = [join(repoRoot, "dist", "cli.js"), join(repoRoot, "packages", "lsp-tools-mcp", "dist", "cli.js")];
+function requireBuild() {
+	const builtEntries = [join(repoRoot, "dist", "cli.js"), join(repoRoot, "dist", "core", "index.js")];
 	const missing = builtEntries.filter((entry) => !existsSync(entry));
 	if (missing.length > 0) {
-		fail(`missing build output (${missing.map((entry) => relative(repoRoot, entry)).join(", ")}); run pnpm run build:all first`);
+		fail(`missing build output (${missing.map((entry) => relative(repoRoot, entry)).join(", ")}); run pnpm run build first`);
 	}
 }
 
-function deploy(out) {
+function stage(out) {
 	rmSync(out, { recursive: true, force: true });
+	mkdirSync(out, { recursive: true });
+	const pkg = JSON.parse(readFileSync(join(repoRoot, "package.json"), "utf8"));
+	for (const path of ["package.json", "pnpm-lock.yaml", ...pkg.files]) {
+		cpSync(join(repoRoot, path), join(out, path), { recursive: true });
+	}
 	const result = spawnSync(
 		"pnpm",
-		["--filter", packageName, "--prod", "deploy", out, "--config.node-linker=hoisted"],
-		{ cwd: repoRoot, stdio: "inherit", shell: process.platform === "win32" },
+		["install", "--prod", "--frozen-lockfile", "--ignore-scripts", "--ignore-workspace", "--config.node-linker=hoisted"],
+		{ cwd: out, stdio: "inherit", shell: process.platform === "win32" },
 	);
-	if (result.status !== 0) fail(`pnpm deploy failed with status ${result.status ?? "null"}`);
+	if (result.error) throw result.error;
+	if (result.status !== 0) fail(`production dependency install failed with status ${result.status ?? "null"}`);
 }
 
 function walk(dir, visit) {
@@ -145,8 +152,8 @@ async function verifyRelocated(out) {
 }
 
 const options = parseArgs(process.argv.slice(2));
-requireBuiltWorkspace();
-deploy(options.out);
+requireBuild();
+stage(options.out);
 stripLinkSurfaces(options.out);
 verifyLayout(options.out);
 console.log(`package-plugin: staged ${options.out}`);

@@ -18,7 +18,6 @@ Codex plugin that ports the standalone LSP runtime from [`pi-lsp-client`](https:
 ## Quick Start
 
 ```bash
-git submodule update --init --recursive
 pnpm install --frozen-lockfile
 pnpm run test:package                     # stages artifacts/codex-lsp-plugin
 codex plugin marketplace add /path/to/marketplace   # a marketplace listing the staged plugin
@@ -36,32 +35,32 @@ Details, including the marketplace layout, are in [Installation](docs/installati
 
 ## Architecture
 
-The LSP runtime lives in [`lsp-tools-mcp`](https://github.com/code-yeongyu/lsp-tools-mcp), consumed here as a git submodule at `packages/lsp-tools-mcp/`.
+This repository owns one npm package with two internal layers:
 
-- `lsp-tools-mcp` owns the MCP server, LSP process management, documents, diagnostics, edits, environment snapshots, and the standard tools.
-- `codex-lsp` composes one long-running MCP process for Codex (`src/cli.ts`): the standard tools, two hook endpoints (`src/hook/`), Codex turn-metadata parsing (`src/codex-context.ts`), the environment binding, capture, and shell integration (`src/environment/`, `shell/`), the launcher (`src/launch.ts`), and the config printer (`src/config-mcp.ts`).
+- `src/core/` owns the MCP server, LSP processes, documents, diagnostics, workspace edits, configuration, and environment snapshots.
+- `src/codex/` owns Codex metadata, edit hooks, shell capture and integration, the launcher, and configuration output.
+- `src/cli.ts` composes both layers into one long-running MCP process; `test/core/`, `test/codex/`, and `test/integration/` cover them at their respective boundaries.
 
-Codex calls the hook endpoints through native `mcp_tool` hooks, so edits are checked by the language servers that are already running instead of a new process per edit.
+Codex calls the hook endpoints through native `mcp_tool` hooks, so checks reuse the language servers serving explicit tools. The architecture and implementation are described in [DESIGN-zh.md](DESIGN-zh.md).
 
 ## Local Development
 
 ```bash
-git submodule update --init --recursive
 pnpm install --frozen-lockfile
-pnpm run build:all
-pnpm run check:all
-pnpm run test:all
-pnpm run test:integration   # real Pyright, Ruff, typescript-language-server, gopls, clangd, rust-analyzer
+pnpm run build
+pnpm run check
+pnpm run test
+pnpm run test:integration   # real Python, TypeScript 6/7, Go, C++, Rust servers
 pnpm run test:package
 ```
 
-The root package depends on the runtime through `workspace:*`, so a missing submodule fails the install instead of silently using a stale build.
+Development, CI, and release use one root `package.json` and `pnpm-lock.yaml`. TypeScript 7 builds the plugin; real integration tests cover TypeScript 6 through typescript-language-server and TypeScript 7 through its native LSP/compiler. Both SDKs are development-only dependencies.
 
 `pnpm test` covers the hook endpoints end to end against `dist/cli.js` with a fake language server. The real-host contract runs Codex itself in a temporary `CODEX_HOME`, installs the staged plugin, and checks that diagnostics reach the session after `apply_patch` and a shell command (needs network, Codex auth, and Pyright):
 
 ```bash
 pnpm run test:package
-CODEX_LSP_CONTRACT=1 pnpm exec vitest --run test/codex-contract.test.ts
+CODEX_LSP_CONTRACT=1 pnpm run test:contract
 ```
 
 ## Branch Rules and Releases

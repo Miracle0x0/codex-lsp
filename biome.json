@@ -31,11 +31,21 @@
 		"lineWidth": 120
 	},
 	"files": {
-		"includes": ["src/**/*.ts", "test/**/*.ts", "vitest.config.ts", "!**/node_modules/**/*", "!**/dist/**/*"]
+		"includes": [
+			"src/**/*.ts",
+			"test/**/*.ts",
+			"vitest.config.ts",
+			"vitest.integration.config.ts",
+			"!**/node_modules/**/*",
+			"!**/dist/**/*"
+		]
 	},
 	"overrides": [
 		{
-			"includes": ["vitest.config.ts"],
+			"includes": [
+				"vitest.config.ts",
+				"vitest.integration.config.ts"
+			],
 			"linter": {
 				"rules": {
 					"style": {
