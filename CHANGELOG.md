@@ -6,6 +6,8 @@
 - The plugin uses the Codex compat layout (`.codex-plugin/plugin.json` + `.mcp.json`) and is staged by `pnpm run test:package` with a hoisted, link-free `node_modules`.
 - The MCP entry is the root CLI; it serves the `2026-07-28` MCP revision and reads the workspace from Codex turn metadata.
 - Picks up the runtime's config schema v1, multi-source diagnostics, and shell-environment binding; `pnpm run test:integration` runs the real-language-server suite.
+- Adds `lsp.hover`, `lsp.goto_implementation`, and call hierarchy tools (`lsp.prepare_call_hierarchy`, `lsp.incoming_calls`, `lsp.outgoing_calls`); TypeScript navigation no longer returns single-file results while the project loads.
+- `pnpm run test:package` builds both packages before staging so the artifact never ships a stale runtime.
 
 ## 0.2.0
 

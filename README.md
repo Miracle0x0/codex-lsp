@@ -30,8 +30,13 @@ Deletes are ignored because they cannot introduce new diagnostics.
 - `lsp.status`
 - `lsp.diagnostics`
 - `lsp.goto_definition`
+- `lsp.goto_implementation`
 - `lsp.find_references`
+- `lsp.hover`
 - `lsp.symbols`
+- `lsp.prepare_call_hierarchy`
+- `lsp.incoming_calls`
+- `lsp.outgoing_calls`
 - `lsp.prepare_rename`
 - `lsp.rename`
 
