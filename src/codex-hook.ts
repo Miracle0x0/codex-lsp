@@ -1,6 +1,13 @@
 import { cwd, stdin as processStdin } from "node:process";
 
-import { createLspRuntime, LSP_TOOLS, type LspRuntime, toToolFailure } from "@code-yeongyu/lsp-tools-mcp";
+import {
+	createLspRuntime,
+	formatBatch,
+	type LspRuntime,
+	providerFailed,
+	runDiagnostics,
+	toToolFailure,
+} from "@code-yeongyu/lsp-tools-mcp";
 
 /** Returns diagnostics text to report for a file, or null when there is nothing to report. */
 export type DiagnosticsRunner = (filePath: string) => Promise<string | null>;
@@ -30,16 +37,14 @@ const MUTATION_TOOL_NAMES = new Set(["apply_patch", "write", "edit", "multiedit"
 const SILENT_FAILURES = new Set(["server_not_configured"]);
 
 export function createDiagnosticsRunner(runtime: LspRuntime): DiagnosticsRunner {
-	const diagnosticsTool = LSP_TOOLS.find((tool) => tool.name === "diagnostics");
-	if (!diagnosticsTool) throw new Error("lsp-tools-mcp does not provide a diagnostics tool");
 	return async (filePath) => {
 		try {
-			const result = await diagnosticsTool.run(
+			const batch = await runDiagnostics(
 				runtime,
-				{ filePath, severity: "error" },
+				{ filePath, severity: "error", timeoutMs: 20_000, limit: 50 },
 				{ signal: new AbortController().signal },
 			);
-			return result.data["total"] === 0 ? null : result.summary;
+			return batch.counts.total === 0 && !providerFailed(batch) ? null : formatBatch(batch);
 		} catch (error) {
 			const failure = toToolFailure(error);
 			return SILENT_FAILURES.has(failure.code) ? null : `[${failure.code}] ${failure.message}`;

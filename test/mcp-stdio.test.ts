@@ -26,7 +26,11 @@ async function connect(workspace: string): Promise<Client> {
 	const configPath = join(workspace, "lsp-client.json");
 	writeFileSync(
 		configPath,
-		JSON.stringify({ lsp: { fake: { command: [process.execPath, FAKE_SERVER], extensions: [".fake"] } } }),
+		JSON.stringify({
+			schemaVersion: 1,
+			servers: { fake: { command: [process.execPath, FAKE_SERVER] } },
+			languages: { fake: { extensions: [".fake"], semanticServer: "fake", diagnosticServers: ["fake"] } },
+		}),
 	);
 	const client = new Client({ name: "codex-lsp-test", version: "0.0.0" }, { versionNegotiation: { mode: "auto" } });
 	await client.connect(

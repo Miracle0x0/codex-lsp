@@ -23,12 +23,9 @@ Project config lives at `.codex/lsp-client.json`; user config lives at `~/.codex
 
 ```json
 {
-	"lsp": {
-		"typescript": {
-			"command": ["typescript-language-server", "--stdio"],
-			"extensions": [".ts", ".tsx", ".js", ".jsx"]
-		}
-	}
+	"schemaVersion": 1,
+	"servers": { "ruff": { "command": ["ruff", "server"] } },
+	"languages": { "python": { "diagnosticServers": ["pyright", "ruff"] } }
 }
 ```
 

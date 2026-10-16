@@ -55,16 +55,13 @@ Example:
 
 ```json
 {
-	"lsp": {
-		"typescript": {
-			"command": ["typescript-language-server", "--stdio"],
-			"extensions": [".ts", ".tsx", ".js", ".jsx"]
-		}
-	}
+	"schemaVersion": 1,
+	"servers": { "ruff": { "command": ["ruff", "server"] } },
+	"languages": { "python": { "diagnosticServers": ["pyright", "ruff"] } }
 }
 ```
 
-Built-in server definitions are used when no custom config overrides them. `lsp.status` shows which configured servers are installed or missing.
+Each language routes to one built-in server by default; the example adds Ruff next to Pyright for Python diagnostics. `status` shows the bound environment, which servers are installed in it, and active clients. Full schema and merge rules: [`lsp-tools-mcp` configuration](packages/lsp-tools-mcp/README.md#configuration).
 
 ## Codex Plugin
 

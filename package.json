@@ -46,6 +46,7 @@
 		"build:all": "pnpm -r run build",
 		"check:all": "pnpm -r run typecheck && pnpm -r run lint",
 		"test:all": "pnpm -r run test",
+		"test:integration": "pnpm --filter @code-yeongyu/lsp-tools-mcp run test:integration",
 		"test:package": "node scripts/package-plugin.mjs --verify"
 	},
 	"dependencies": {
