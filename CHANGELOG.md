@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Preserve complete edit/rename diagnostic baselines, retain old baselines for unconfirmed results, and recheck every open related file.
+- Report incomplete file tracking even with no changes; distinguish atomic replacement from file creation.
+- Capture current configuration and extra variables at every prompt, report capture failures, and add `env list` / `env remove` for explicit snapshot management.
+- Bind signed call hierarchy handles to server instances, configurations, environment generations and file contents; emit requested MCP start/completion notifications.
+- Add main-repository real-server CI and a manually enabled authenticated Codex contract job.
+
 - Usage documentation in `docs/` (installation, shell environments, post-edit diagnostics, tools, configuration, troubleshooting); the README now links to it.
 - Picks up the runtime's Rust fixes: the first rust-analyzer check waits for workspace loading instead of reporting an empty result, `cargo check` errors are merged in, and dynamically registered `didSave` is honoured.
 - Development and CI use a pnpm workspace that includes the `lsp-tools-mcp` submodule through `workspace:*`.

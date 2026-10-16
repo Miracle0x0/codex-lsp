@@ -45,7 +45,7 @@ eval "$(node /path/to/codex-lsp/dist/cli.js env shell-init zsh)"
 Invoke-Expression ((& node /path/to/codex-lsp/dist/cli.js env shell-init pwsh) -join [Environment]::NewLine)
 ```
 
-Each interactive shell gets its own environment id (exported as `CODEX_LSP_CONTEXT_ID`; nested shells get a new one). Before each prompt, the integration compares the working directory and the language-related variables with the last capture and, only when something changed, records a new generation. Activating or deactivating a venv therefore produces a new generation at the next prompt, and variables you unset are recorded as removed. Existing `PROMPT_COMMAND`, `precmd` hooks, and `prompt` functions keep running, and `$?` / `$LASTEXITCODE` are preserved.
+Each interactive shell gets its own environment id (exported as `CODEX_LSP_CONTEXT_ID`; nested shells get a new one). Before every prompt, the capture helper reads the current configuration, working directory, and language-related variables, including `environment.extraVariables`. A new generation is written only when the directory or captured variables change; unset variables are recorded as removed. Invalid configuration and failed captures are reported and checked again at the next prompt. Existing prompt hooks keep running; Bash/zsh preserve `$?`, and PowerShell preserves `$LASTEXITCODE`. This requires one Node helper invocation per prompt, including prompts whose snapshot is unchanged.
 
 With the integration installed, `codex-lsp launch` records the shell's id as the parent of the launch snapshot.
 
@@ -83,6 +83,17 @@ Snapshots record only the variables language tooling reads, for example `PATH`, 
 | Windows | `%LOCALAPPDATA%\codex-lsp` |
 
 Set `CODEX_LSP_STATE_DIR` to an absolute path to use another directory. Each environment is `environments/<id>/manifest.json` plus the last three `gen-<n>.json` snapshots; directories are created with mode `0700` and files with `0600`.
+
+## List and remove snapshots
+
+`env list` prints ids, kinds, generations, capture times, and directories as JSON, without captured variable values. After stopping the sessions using an environment and updating any pinned configuration, remove that specific environment:
+
+```bash
+node /path/to/codex-lsp/dist/cli.js env list
+node /path/to/codex-lsp/dist/cli.js env remove env-6f1c...
+```
+
+Removal deletes the selected manifest and all its generations. There is no age-based automatic deletion because an external host can remain pinned to an old id. Missing and invalid ids are errors.
 
 ## How the toolchain is chosen
 

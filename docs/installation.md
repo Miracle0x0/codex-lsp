@@ -100,3 +100,7 @@ node /path/to/codex-lsp/dist/cli.js config mcp
 ```
 
 Hooks configured this way also need to be trusted in Codex.
+
+## Validation in CI
+
+The main repository CI runs real-language-server integration alongside its operating-system and Node unit/package matrix. For real Codex tests, manually start `ci` with `codex_contract` enabled and configure the repository secret `CODEX_AUTH_JSON` with the test account's authentication JSON. The job uses Codex 0.163.0, builds the plugin, runs the host contract cases in temporary Codex homes, and removes its temporary authentication file. Missing authentication fails the requested job. The contract bypasses Hook trust for its isolated invocations; interactive trust and desktop/IDE behavior require separate host verification.

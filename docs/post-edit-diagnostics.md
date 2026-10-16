@@ -9,12 +9,12 @@ After Codex edits files, the plugin checks them with the language servers that a
 | Hook | Endpoint | What it does |
 |------|----------|--------------|
 | PreToolUse | `pre_edit_snapshot` | For `apply_patch`: records the current diagnostics of the files the patch updates, deletes, or moves (skipped when an up-to-date record exists). For `Bash`: marks the workspace file-change journal. |
-| PostToolUse | `post_edit_diagnostics` | Works out which files changed, tells every running language server, checks the changed files plus documents already open in a server, and compares the result with the record. |
+| PostToolUse | `post_edit_diagnostics` | Works out which files changed, tells every running language server, checks the changed files plus all documents already open in that workspace's servers, and compares the result with the record. |
 
 How the changed files are found:
 
 - `apply_patch`: from the patch headers (`Add File`, `Update File`, `Delete File`, `Update File` + `Move to`). A patch Codex reports as failed (`Exit code` other than 0) is ignored.
-- `Bash`: Codex does not report what a command wrote, so the plugin keeps a file-change journal of the workspace (per-directory file watchers started on the first hook). The files created or changed between the command's PreToolUse and PostToolUse are checked. Dependency and build directories (`.git`, `node_modules`, `.venv`, `dist`, `build`, `target`, and others, plus `diagnostics.exclude`) are not watched; the journal stops at 4096 watched directories and says so.
+- `Bash`: Codex does not report what a command wrote, so the plugin keeps a file-change journal of the workspace. The pre-hook records the event position and known files, so atomically replacing an existing file is treated as a change. Dependency and build directories (`.git`, `node_modules`, `.venv`, `dist`, `build`, `target`, and others, plus `diagnostics.exclude`) are not watched. The journal stops at 4096 watched directories and reports incomplete coverage on every affected check, even with no recorded changes. Missing pre-hook records and closed journals are also reported.
 
 ## What is reported
 
@@ -29,9 +29,10 @@ Diagnostics are compared by provider, severity, code, and message, so problems t
 | the environment changed since the last check | current problems, marked as not attributed to this edit |
 | an open document broke because of the edit (an importer) | its new problems |
 | a provider failed, timed out, or is not installed | `Diagnostics incomplete:` with the reason; never hidden by the comparison |
+| a file's diagnostics are unconfirmed | observed problems without edit attribution; the previous baseline is retained and no resolution is claimed |
 | nothing new, a failed patch, or files without a configured language | no feedback |
 
-At most 20 diagnostics are listed; the rest are counted, and `lsp.diagnostics` returns the full list. Errors and warnings are reported by default; set `diagnostics.minimumSeverity` in the [configuration](configuration.md) to change that.
+At most 20 diagnostics are listed in Hook text; the rest are counted. Baselines and Hook structured results retain every collected diagnostic, and all open related files are eligible for checking. For direct inspection, `lsp.diagnostics` has a `limit` parameter (default 200); increase it when the result says `truncated`. Errors and warnings are reported by default; set `diagnostics.minimumSeverity` in the [configuration](configuration.md) to change that.
 
 Example, after a patch that assigns a string to an `int`:
 

@@ -6,6 +6,11 @@ on:
   pull_request:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      codex_contract:
+        description: Run real Codex contract tests (requires CODEX_AUTH_JSON secret)
+        type: boolean
+        default: false
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -51,6 +56,8 @@ jobs:
         run: pnpm run check:all
 
       - name: Unit tests
+        env:
+          CODEX_LSP_REQUIRE_PWSH: ${{ runner.os == 'Windows' && '1' || '0' }}
         run: pnpm run test:all
 
       - name: Plugin package
@@ -58,3 +65,67 @@ jobs:
 
       - name: npm package smoke
         run: pnpm pack --dry-run
+
+  integration:
+    name: integration (real language servers)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          submodules: recursive
+      - uses: pnpm/setup@c9883cc79df532ad1a7b81bf9ab944ceb090d65c # v2.0.0
+        with:
+          runtime: node@24
+          cache: true
+          install: false
+      - run: pnpm install --frozen-lockfile
+      - name: Install language servers
+        run: |
+          npm install -g pyright@1.1.414 typescript-language-server@6.0.0
+          pipx install ruff==0.17.0
+          pipx install uv==0.13.1
+          go install golang.org/x/tools/gopls@v0.24.0
+          sudo apt-get update && sudo apt-get install -y clangd
+          rustup component add rust-analyzer
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+      - run: pnpm run build:all
+      - run: pnpm run test:integration
+
+  codex-contract:
+    name: contract (Codex 0.163.0)
+    if: github.event_name == 'workflow_dispatch' && inputs.codex_contract
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          submodules: recursive
+      - uses: pnpm/setup@c9883cc79df532ad1a7b81bf9ab944ceb090d65c # v2.0.0
+        with:
+          runtime: node@24
+          cache: true
+          install: false
+      - run: pnpm install --frozen-lockfile
+      - run: npm install -g @openai/codex@0.163.0 pyright@1.1.414
+      - run: pnpm run test:package
+      - name: Write isolated authentication file
+        env:
+          CODEX_AUTH_JSON: ${{ secrets.CODEX_AUTH_JSON }}
+        run: |
+          node --input-type=module <<'NODE'
+          import { writeFileSync } from "node:fs";
+          import { join } from "node:path";
+          const auth = process.env.CODEX_AUTH_JSON;
+          if (!auth) throw new Error("CODEX_AUTH_JSON secret is required for contract tests");
+          JSON.parse(auth);
+          writeFileSync(join(process.env.RUNNER_TEMP, "codex-lsp-auth.json"), auth, { mode: 0o600 });
+          NODE
+      - name: Codex contract
+        env:
+          CODEX_LSP_CONTRACT: "1"
+          CODEX_LSP_CONTRACT_AUTH: ${{ runner.temp }}/codex-lsp-auth.json
+        run: pnpm exec vitest --run test/codex-contract.test.ts
+      - name: Remove authentication file
+        if: always()
+        run: rm -f "$RUNNER_TEMP/codex-lsp-auth.json"

@@ -57,6 +57,17 @@ const contextOf = (output: HookOutput): string => output.hookSpecificOutput?.add
 const update = (path: string) => `*** Begin Patch\n*** Update File: ${path}\n@@\n*** End Patch`;
 
 describe("post_edit_diagnostics hook", () => {
+	it("#given an existing file without a baseline #when atomically replaced #then old problems are not attributed to a new file", async () => {
+		const session = await start();
+		const path = session.write("legacy.fake", "ERROR old\n");
+		const output = await toolCall(session, "Bash", "replace", () => {
+			const temporary = session.write("replace.tmp", "ERROR old\nok\n");
+			renameSync(temporary, path);
+		});
+		expect(contextOf(output)).toContain("first check in this session; 1 existing problem(s)");
+		expect(contextOf(output)).not.toContain("new file");
+	});
+
 	it("#given a file with an existing problem #when a patch adds another #then only the new one is reported as new", async () => {
 		// given
 		const session = await start();
@@ -188,6 +199,47 @@ describe("post_edit_diagnostics hook", () => {
 });
 
 describe("post_edit_diagnostics failures", () => {
+	it("#given no pre-hook record #when a shell post-hook arrives #then the tracking failure reaches Codex", async () => {
+		const session = await start();
+		const post = await session.client.callTool({
+			name: "post_edit_diagnostics",
+			arguments: {
+				sessionId: "session-1",
+				toolUseId: "missing",
+				cwd: session.workspace,
+				toolName: "Bash",
+				toolInput: { command: "edit" },
+				toolResponse: "",
+			},
+		});
+		expect(textOf(post)).toContain("No PreToolUse record");
+	});
+
+	it("#given more than 1000 problems #when another file pushes an existing problem past the display limit #then it is not resolved", async () => {
+		const session = await start();
+		const a = session.write("a.fake", "ok\n");
+		const b = session.write("z.fake", "ERROR old\n");
+		await toolCall(session, "apply_patch", update(b), () => undefined);
+		const output = await toolCall(session, "apply_patch", update(a), () => writeFileSync(a, "ERROR\n".repeat(1001)));
+		expect(contextOf(output)).toContain("1001 new problem(s)");
+		expect(contextOf(output)).not.toContain(`${b}: 1 problem(s) resolved`);
+	});
+
+	it("#given more than ten open files #when the last one breaks #then it is rechecked", async () => {
+		const session = await start();
+		const paths: string[] = [];
+		for (let i = 0; i < 12; i++) {
+			const path = session.write(`file-${i}.fake`, "ok\n");
+			paths.push(path);
+		}
+		await toolCall(session, "apply_patch", paths.map(update).join("\n"), () => undefined);
+		const last = paths[11];
+		const first = paths[0];
+		if (last === undefined || first === undefined) throw new Error("missing fixture");
+		const output = await toolCall(session, "apply_patch", update(first), () => writeFileSync(last, "ERROR\n"));
+		expect(contextOf(output)).toContain(`${last}: 1 new problem(s)`);
+	}, 30_000);
+
 	it("#given the language server is not installed #when a file is edited #then the hook reports it instead of staying silent", async () => {
 		// given
 		const session = await start();

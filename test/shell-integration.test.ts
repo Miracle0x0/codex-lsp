@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -40,9 +40,11 @@ function snapshots(stateDir: string): Snapshot[] {
 }
 
 /** Runs commands in an interactive shell (prompts run between them) with the integration installed. */
-function interactive(shell: "bash" | "zsh", priorHook: string, commands: readonly string[]) {
+function interactive(shell: "bash" | "zsh", priorHook: string, commands: readonly string[], config?: unknown) {
 	const stateDir = mkdtempSync(join(tmpdir(), "codex-lsp-shell-"));
 	roots.push(stateDir);
+	const configPath = join(stateDir, "config.json");
+	writeFileSync(configPath, JSON.stringify(config ?? { schemaVersion: 1 }));
 	const args = shell === "bash" ? ["--noprofile", "--norc", "-i"] : ["-f", "-i"];
 	const { VIRTUAL_ENV: _active, ...env } = process.env;
 	const result = spawnSync(shell, args, {
@@ -53,7 +55,7 @@ function interactive(shell: "bash" | "zsh", priorHook: string, commands: readonl
 			"exit",
 			"",
 		].join("\n"),
-		env: { ...env, CODEX_LSP_STATE_DIR: stateDir, PS1: "", PROMPT: "" },
+		env: { ...env, CODEX_LSP_STATE_DIR: stateDir, LSP_TOOLS_MCP_PROJECT_CONFIG: configPath, PS1: "", PROMPT: "" },
 		encoding: "utf8",
 		timeout: 60_000,
 	});
@@ -63,6 +65,39 @@ function interactive(shell: "bash" | "zsh", priorHook: string, commands: readonl
 const PRIOR_HOOK = { bash: "PROMPT_COMMAND='echo prior-hook'", zsh: "precmd() { echo prior-hook }" } as const;
 
 describe.each(["bash", "zsh"] as const)("%s integration", (shell) => {
+	it.runIf(process.platform !== "win32" && has(shell))(
+		"#given invalid config #when repaired without environment changes #then a later prompt captures it",
+		() => {
+			const config = JSON.stringify({ schemaVersion: 1 });
+			const { stateDir, output } = interactive(
+				shell,
+				PRIOR_HOOK[shell],
+				[`printf '%s' '${config}' > "$LSP_TOOLS_MCP_PROJECT_CONFIG"`, "true"],
+				{ schemaVersion: 999 },
+			);
+			expect(output).toContain("environment capture failed");
+			expect(snapshots(stateDir)).toHaveLength(1);
+		},
+	);
+
+	it.runIf(process.platform !== "win32" && has(shell))(
+		"#given an extra variable #when only it changes #then the snapshot follows it",
+		() => {
+			const { stateDir, output } = interactive(
+				shell,
+				PRIOR_HOOK[shell],
+				["export CODEX_LSP_TEST_EXTRA=one", "export CODEX_LSP_TEST_EXTRA=two", "unset CODEX_LSP_TEST_EXTRA"],
+				{ schemaVersion: 1, environment: { extraVariables: ["CODEX_LSP_TEST_EXTRA"] } },
+			);
+			expect(output).not.toContain("capture failed");
+			expect(snapshots(stateDir).map((item) => item.variables["CODEX_LSP_TEST_EXTRA"] ?? null)).toEqual([
+				"one",
+				"two",
+				null,
+			]);
+		},
+	);
+
 	// Git Bash on Windows is not a supported integration target.
 	it.runIf(process.platform !== "win32" && has(shell))(
 		"#given an activated and then deactivated venv #when prompts run #then each change is one generation and the shell is untouched",
@@ -93,10 +128,11 @@ describe.each(["bash", "zsh"] as const)("%s integration", (shell) => {
 });
 
 describe("pwsh integration", () => {
-	it.runIf(has("pwsh"))(
+	it.runIf(has("pwsh") || process.env["CODEX_LSP_REQUIRE_PWSH"] === "1")(
 		"#given an activated and then deactivated venv #when the prompt runs #then each change is one generation and LASTEXITCODE survives",
 		() => {
 			// given
+			if (!has("pwsh")) throw new Error("PowerShell is required for this CI job but pwsh is unavailable");
 			const stateDir = mkdtempSync(join(tmpdir(), "codex-lsp-pwsh-"));
 			roots.push(stateDir);
 			const quote = (value: string): string => `'${value.replaceAll("'", "''")}'`;

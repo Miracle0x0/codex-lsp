@@ -13,7 +13,7 @@ The plugin's MCP server is named `lsp`; Codex shows its tools as `lsp.<tool>` (a
 | `environmentId` | A captured environment to analyze with instead of the bound one (see [Shell environments](environments.md)). |
 | `server` | A server id to ask instead of the language's semantic server (navigation and rename tools). |
 
-Every tool returns a text summary and `structuredContent` that matches its output schema. Locations are `{ "path", "range": { "start": { "line", "character" }, "end": { ... } } }` in the same coordinates.
+Every tool returns a text summary and `structuredContent` that matches its output schema. Locations are `{ "path", "range": { "start": { "line", "character" }, "end": { ... } } }` in the same coordinates. When requested by the MCP caller, tools send start and completion progress notifications. These report execution stages, not estimated percentages; display depends on the host.
 
 ## Status and diagnostics
 
@@ -42,7 +42,7 @@ Every tool returns a text summary and `structuredContent` that matches its outpu
 2. `incoming_calls` (`item`: a handle) returns `calls`, each with the caller `item` and `fromRanges`, the call sites inside the caller.
 3. `outgoing_calls` (`item`: a handle) returns `calls`, each with the callee `item` and `fromRanges`, the call sites inside the item you passed.
 
-Returned items have handles too, so you can keep walking. A handle remembers which server, workspace, and environment produced it and carries the server's private data; pass it unchanged. A modified handle is rejected with `invalid_input`.
+Returned items have handles too, so you can keep walking. A signed handle preserves the server's private data and binds the server instance, configuration, environment generation, workspace, and item file contents; pass it unchanged. Modified handles are rejected with `invalid_input`. After a server restart, environment/configuration change, or item file edit, run `prepare_call_hierarchy` again.
 
 ## Rename
 

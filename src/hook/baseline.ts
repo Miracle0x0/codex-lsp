@@ -96,8 +96,10 @@ export class BaselineStore {
 
 	/** Records every file a batch checked as the new baseline for the session. */
 	record(session: string, batch: DiagnosticBatch): void {
-		for (const path of new Set(batch.files.map((file) => file.path)))
+		for (const path of new Set(batch.files.map((file) => file.path))) {
+			if (batch.files.some((file) => file.path === path && file.freshness === "unconfirmed")) continue;
 			this.set(session, path, baselineOf(batch, path));
+		}
 	}
 
 	private files(session: string): Map<string, FileBaseline> {

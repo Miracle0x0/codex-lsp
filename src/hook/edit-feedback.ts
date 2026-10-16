@@ -4,7 +4,9 @@ import {
 	type DiagnosticBatch,
 	diagnoseFiles,
 	type FileChange,
+	type FileChangeJournal,
 	formatBatchDiagnostic,
+	type JournalMark,
 	type LspRuntime,
 	type Severity,
 } from "@code-yeongyu/lsp-tools-mcp";
@@ -28,7 +30,7 @@ export type HookOutput =
 	| Record<string, never>
 	| { readonly hookSpecificOutput: { readonly hookEventName: "PostToolUse"; readonly additionalContext: string } };
 
-export type FileStatus = "compared" | "created" | "first-check" | "environment-changed";
+export type FileStatus = "compared" | "created" | "first-check" | "environment-changed" | "unconfirmed";
 
 export interface FileReport {
 	readonly path: string;
@@ -51,10 +53,6 @@ export interface PostEditResult {
 export const APPLY_PATCH_TOOL = "apply_patch";
 export const SHELL_TOOL = "Bash";
 
-/** Open documents rechecked after an edit so breakage in importers shows up. */
-const MAX_RELATED_FILES = 10;
-/** Large enough that baselines are complete for edited files. */
-const DIAGNOSTICS_LIMIT = 1_000;
 const MAX_REPORTED_DIAGNOSTICS = 20;
 const MAX_PENDING_MARKS = 256;
 
@@ -74,7 +72,18 @@ function isFile(path: string): boolean {
 }
 
 function emptyResult(notes: readonly string[] = [], changes: readonly FileChange[] = []): PostEditResult {
-	return { hookOutput: {}, changes, reports: [], batch: null, notes };
+	return {
+		hookOutput:
+			notes.length === 0
+				? {}
+				: {
+						hookSpecificOutput: { hookEventName: "PostToolUse", additionalContext: notes.join("\n") },
+					},
+		changes,
+		reports: [],
+		batch: null,
+		notes,
+	};
 }
 
 /**
@@ -82,8 +91,7 @@ function emptyResult(notes: readonly string[] = [], changes: readonly FileChange
  * journal for shell commands), which files to check, and what is new relative to the session's baseline.
  */
 export class EditFeedback {
-	private readonly marks = new Map<string, { readonly workspace: string; readonly mark: number }>();
-	private readonly reportedReasons = new Map<string, Set<string>>();
+	private readonly marks = new Map<string, { readonly journal: FileChangeJournal; readonly mark: JournalMark }>();
 
 	constructor(
 		private readonly runtime: LspRuntime,
@@ -94,7 +102,7 @@ export class EditFeedback {
 	async before(event: PreEditEvent, signal: AbortSignal): Promise<{ tracked: boolean; baselined: number }> {
 		const journal = this.runtime.journal(event.cwd);
 		if (event.toolName === SHELL_TOOL) {
-			this.marks.set(event.toolUseId, { workspace: event.cwd, mark: journal.mark() });
+			this.marks.set(event.toolUseId, { journal, mark: journal.mark() });
 			for (const oldest of this.marks.keys()) {
 				if (this.marks.size <= MAX_PENDING_MARKS) break;
 				this.marks.delete(oldest);
@@ -138,8 +146,7 @@ export class EditFeedback {
 		].filter(isFile);
 		const related = this.runtime
 			.openDocumentPaths(event.cwd)
-			.filter((path) => !edited.includes(path) && !deleted.has(path) && isFile(path))
-			.slice(0, MAX_RELATED_FILES);
+			.filter((path) => !edited.includes(path) && !deleted.has(path) && isFile(path));
 		if (edited.length === 0 && related.length === 0) return emptyResult(notes, changes);
 
 		const batch = await this.check(event, [...edited, ...related], "edited file(s)", signal);
@@ -169,17 +176,11 @@ export class EditFeedback {
 		if (pending === undefined) {
 			return { changes: [], notes: ["No PreToolUse record for this command; its file changes were not tracked."] };
 		}
-		const window = await this.runtime.journal(pending.workspace).collect(pending.mark);
-		return { changes: window.changes, notes: this.unreported(event.sessionId, window.incompleteReasons) };
-	}
-
-	/** Journal problems are standing conditions; each is reported once per session. */
-	private unreported(session: string, reasons: readonly string[]): string[] {
-		const seen = this.reportedReasons.get(session) ?? new Set<string>();
-		this.reportedReasons.set(session, seen);
-		const fresh = reasons.filter((reason) => !seen.has(reason));
-		for (const reason of fresh) seen.add(reason);
-		return fresh.map((reason) => `File changes may be incomplete: ${reason}`);
+		const window = await pending.journal.collect(pending.mark);
+		return {
+			changes: window.changes,
+			notes: window.incompleteReasons.map((reason) => `File changes may be incomplete: ${reason}`),
+		};
 	}
 
 	private check(
@@ -198,7 +199,6 @@ export class EditFeedback {
 				environmentId: this.runtime.environmentId({}, { signal }) ?? null,
 				target: `${paths.length} ${label}`,
 				severity,
-				limit: DIAGNOSTICS_LIMIT,
 			},
 			signal,
 		);
@@ -214,6 +214,9 @@ export class EditFeedback {
 	): FileReport[] {
 		const now = baselineOf(batch, path);
 		if (now.providers.length === 0) return [];
+		if (batch.files.some((file) => file.path === path && file.freshness === "unconfirmed")) {
+			return [{ path, status: "unconfirmed", added: [], resolved: [], existing: now.diagnostics }];
+		}
 		const before = this.baselines.get(session, path);
 		this.baselines.set(session, path, now);
 		if (created) return [{ path, status: "created", added: now.diagnostics, resolved: [], existing: [] }];
@@ -264,9 +267,11 @@ export class EditFeedback {
 			}
 			if (report.existing.length > 0) {
 				body.push(
-					report.status === "environment-changed"
-						? `${report.path}: the environment changed since the last check; ${report.existing.length} current problem(s), not attributed to this edit`
-						: `${report.path}: first check in this session; ${report.existing.length} existing problem(s), not attributed to this edit`,
+					report.status === "unconfirmed"
+						? `${report.path}: diagnostics not confirmed; ${report.existing.length} observed problem(s), not attributed to this edit`
+						: report.status === "environment-changed"
+							? `${report.path}: the environment changed since the last check; ${report.existing.length} current problem(s), not attributed to this edit`
+							: `${report.path}: first check in this session; ${report.existing.length} existing problem(s), not attributed to this edit`,
 				);
 				list(report.existing);
 			}

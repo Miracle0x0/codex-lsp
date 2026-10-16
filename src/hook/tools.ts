@@ -48,7 +48,7 @@ export function preEditSnapshotTool(feedback: EditFeedback): RegisteredLspTool {
 
 const FileReportSchema = z.object({
 	path: z.string(),
-	status: z.enum(["compared", "created", "first-check", "environment-changed"]),
+	status: z.enum(["compared", "created", "first-check", "environment-changed", "unconfirmed"]),
 	added: z.number().int(),
 	resolved: z.number().int(),
 	existing: z.number().int(),

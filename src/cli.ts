@@ -17,6 +17,7 @@ import { resolveCodexContext } from "./codex-context.js";
 import { mcpConfigToml } from "./config-mcp.js";
 import { captureStateDir, launchBinding } from "./environment/binding.js";
 import { captureEnvironment } from "./environment/capture.js";
+import { listEnvironments, removeEnvironment } from "./environment/manage.js";
 import { type CliCommand, isShellName, SHELLS, shellInitScript } from "./environment/shell-init.js";
 import { BaselineStore } from "./hook/baseline.js";
 import { EditFeedback } from "./hook/edit-feedback.js";
@@ -28,6 +29,8 @@ const USAGE = `Usage:
   codex-lsp launch [codex arguments...]          capture this shell's environment and start Codex with it
   codex-lsp env capture [--kind shell|command] [--shell <name>]  snapshot this shell's environment; prints the environment id
   codex-lsp env shell-init <${SHELLS.join("|")}>          print shell integration to eval in your shell rc
+  codex-lsp env list                             list captured environment metadata as JSON
+  codex-lsp env remove <environment-id>           remove that environment's manifest and snapshots
   codex-lsp config mcp [--environment-id <id>]   print Codex config for using codex-lsp without the plugin
 `;
 
@@ -76,6 +79,17 @@ function option(args: readonly string[], name: string): string | undefined {
 
 function envCommand(args: readonly string[]): void {
 	const [subcommand, ...rest] = args;
+	if (subcommand === "list") {
+		stdout.write(`${JSON.stringify(listEnvironments(captureStateDir(env)), null, 2)}\n`);
+		return;
+	}
+	if (subcommand === "remove") {
+		const id = rest[0];
+		if (id === undefined || rest.length !== 1) throw new UsageError("env remove needs one environment id");
+		removeEnvironment(captureStateDir(env), id);
+		stdout.write(`Removed ${id}\n`);
+		return;
+	}
 	if (subcommand === "capture") {
 		const kind = option(rest, "--kind") ?? "command";
 		if (kind !== "shell" && kind !== "command") throw new UsageError("--kind must be shell or command");

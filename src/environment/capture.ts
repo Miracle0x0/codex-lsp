@@ -33,13 +33,9 @@ export function shellEnvironmentId(env: NodeJS.ProcessEnv): string | undefined {
 	return id !== undefined && ENVIRONMENT_ID_PATTERN.test(id) ? id : undefined;
 }
 
-/** Extra variables a project asks to capture; an unreadable config only loses those extras. */
+/** Invalid configuration must fail capture, including from a prompt hook. */
 function extraVariables(cwd: string): readonly string[] {
-	try {
-		return loadEffectiveConfig(cwd).environment.extraVariables;
-	} catch {
-		return [];
-	}
+	return loadEffectiveConfig(cwd).environment.extraVariables;
 }
 
 /**
