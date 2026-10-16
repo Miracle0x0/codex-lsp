@@ -107,7 +107,7 @@ pnpm install --frozen-lockfile
 pnpm run build:all
 pnpm run check:all
 pnpm run test:all
-pnpm run test:integration   # real Pyright, Ruff, typescript-language-server, gopls
+pnpm run test:integration   # real Pyright, Ruff, typescript-language-server, gopls, clangd
 pnpm run test:package
 ```
 

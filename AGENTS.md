@@ -19,7 +19,7 @@ Conventions for humans and agents working on this repository.
 - `pnpm run build:all` builds the runtime and the Codex adapter in dependency order.
 - `pnpm run check:all` runs typecheck and Biome in both packages.
 - `pnpm run test:all` runs both test suites once.
-- `pnpm run test:integration` runs the runtime against real language servers (Pyright, Ruff, typescript-language-server, gopls); a missing server fails the run.
+- `pnpm run test:integration` runs the runtime against real language servers (Pyright, Ruff, typescript-language-server, gopls, clangd); a missing server fails the run.
 - `pnpm run test:package` builds both packages, stages the plugin with `pnpm deploy` (hoisted, no symlinks), and starts it outside the source tree.
 - `CODEX_LSP_CONTRACT=1 pnpm exec vitest --run test/codex-contract.test.ts` drives real Codex in a temporary `CODEX_HOME` (needs network and Codex auth; run `test:package` first, set `CODEX_LSP_CONTRACT_KEEP=1` to keep the files).
 
