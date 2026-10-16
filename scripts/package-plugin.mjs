@@ -8,12 +8,15 @@
 //   node scripts/package-plugin.mjs [--out <dir>] [--verify]
 //
 // --verify copies the staged plugin to a fresh directory outside the source tree
-// and checks that the MCP entry starts and lists its tools from there.
-import { spawn, spawnSync } from "node:child_process";
+// and checks that the MCP entry answers a 2026-07-28 client from there.
+import { spawnSync } from "node:child_process";
 import { cpSync, existsSync, lstatSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+
+import { Client } from "@modelcontextprotocol/client";
+import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const packageName = "@code-yeongyu/codex-lsp";
@@ -104,52 +107,25 @@ function verifyLayout(out) {
 	if (problems.length > 0) fail(`invalid plugin layout in ${out}:\n  ${problems.join("\n  ")}`);
 }
 
-function listToolsFrom(pluginDir) {
-	return new Promise((resolvePromise, rejectPromise) => {
-		const child = spawn(process.execPath, ["./dist/cli.js", "mcp"], {
-			cwd: pluginDir,
-			env: { PATH: process.env["PATH"] ?? "", HOME: process.env["HOME"] ?? "" },
-			stdio: ["pipe", "pipe", "pipe"],
-		});
-		let stdout = "";
-		let stderr = "";
-		const timer = setTimeout(() => {
-			child.kill();
-			rejectPromise(new Error(`MCP entry did not answer within 10s\n${stderr}`));
-		}, 10_000);
-		child.stdout.setEncoding("utf8");
-		child.stderr.setEncoding("utf8");
-		child.stderr.on("data", (chunk) => {
-			stderr += chunk;
-		});
-		child.stdout.on("data", (chunk) => {
-			stdout += chunk;
-			for (const line of stdout.split("\n")) {
-				if (!line.trim()) continue;
-				const message = JSON.parse(line);
-				if (message.id === 2) {
-					clearTimeout(timer);
-					child.stdin.end();
-					resolvePromise(message.result?.tools?.map((tool) => tool.name) ?? []);
-					return;
-				}
-			}
-		});
-		child.on("error", (error) => {
-			clearTimeout(timer);
-			rejectPromise(error);
-		});
-		const requests = [
-			{
-				jsonrpc: "2.0",
-				id: 1,
-				method: "initialize",
-				params: { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "package-plugin", version: "0" } },
-			},
-			{ jsonrpc: "2.0", id: 2, method: "tools/list" },
-		];
-		child.stdin.write(`${requests.map((request) => JSON.stringify(request)).join("\n")}\n`);
+async function listToolsFrom(pluginDir) {
+	const client = new Client({ name: "package-plugin", version: "0" }, { versionNegotiation: { mode: "auto" } });
+	const transport = new StdioClientTransport({
+		command: process.execPath,
+		args: ["./dist/cli.js", "mcp"],
+		cwd: pluginDir,
+		env: { PATH: process.env["PATH"] ?? "", HOME: process.env["HOME"] ?? "" },
 	});
+	const timeout = setTimeout(() => {
+		void client.close();
+	}, 15_000);
+	try {
+		await client.connect(transport);
+		const { tools } = await client.listTools();
+		return tools.map((tool) => tool.name);
+	} finally {
+		clearTimeout(timeout);
+		await client.close();
+	}
 }
 
 async function verifyRelocated(out) {

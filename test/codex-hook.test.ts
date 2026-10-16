@@ -78,10 +78,7 @@ describe("codex PostToolUse hook", () => {
 				if (filePath === "src/broken.ts") {
 					return "error[typescript] (2322) at 1:7: Type 'number' is not assignable to type 'string'.";
 				}
-				if (filePath === "README.md") {
-					return "No LSP server configured for extension: .md";
-				}
-				return "No diagnostics found";
+				return null;
 			},
 		);
 
@@ -117,7 +114,7 @@ describe("codex PostToolUse hook", () => {
 		expect(output).toBe("");
 	});
 
-	it("is silent for clean diagnostics and unsupported extensions", async () => {
+	it("is silent when the runner has nothing to report", async () => {
 		const output = await runLspPostToolUseHook(
 			{
 				tool_name: "apply_patch",
@@ -126,7 +123,7 @@ describe("codex PostToolUse hook", () => {
 				},
 				tool_response: "Success. Updated files.",
 			},
-			async () => "No LSP server configured for extension: .md",
+			async () => null,
 		);
 
 		expect(output).toBe("");

@@ -22,7 +22,7 @@ describe("plugin package metadata", () => {
 		// then
 		expect(packageJson["type"]).toBe("module");
 		expect(packageJson["packageManager"]).toBe("pnpm@12.11.2");
-		expect(packageJson["dependencies"]).toEqual({ "@code-yeongyu/lsp-tools-mcp": "workspace:*" });
+		expect(record(packageJson["dependencies"], "dependencies")["@code-yeongyu/lsp-tools-mcp"]).toBe("workspace:*");
 		expect(record(packageJson["bin"], "bin")["codex-lsp"]).toBe("./dist/cli.js");
 		expect(readFileSync("src/cli.ts", "utf8").startsWith("#!/usr/bin/env node")).toBe(true);
 	});

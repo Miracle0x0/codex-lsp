@@ -1,10 +1,12 @@
-import { stdin as processStdin } from "node:process";
+import { cwd, stdin as processStdin } from "node:process";
 
-import { executeLspDiagnostics } from "@code-yeongyu/lsp-tools-mcp/dist/tools.js";
+import { createLspRuntime, LSP_TOOLS, type LspRuntime, toToolFailure } from "@code-yeongyu/lsp-tools-mcp";
 
-export type DiagnosticsRunner = (filePath: string) => Promise<string>;
+/** Returns diagnostics text to report for a file, or null when there is nothing to report. */
+export type DiagnosticsRunner = (filePath: string) => Promise<string | null>;
 
 export interface CodexPostToolUseInput {
+	cwd?: unknown;
 	tool_name?: unknown;
 	tool_input?: unknown;
 	tool_response?: unknown;
@@ -25,25 +27,37 @@ interface PostToolUseHookOutput {
 }
 
 const MUTATION_TOOL_NAMES = new Set(["apply_patch", "write", "edit", "multiedit", "multi_edit"]);
-const CLEAN_DIAGNOSTICS_TEXT = "No diagnostics found";
-const UNSUPPORTED_EXTENSION_TEXT = "No LSP server configured for extension:";
+const SILENT_FAILURES = new Set(["server_not_configured"]);
 
-export async function runLspDiagnosticsText(filePath: string): Promise<string> {
-	const result = await executeLspDiagnostics({ filePath, severity: "error" });
-	return result.content.map((block) => block.text).join("\n");
+export function createDiagnosticsRunner(runtime: LspRuntime): DiagnosticsRunner {
+	const diagnosticsTool = LSP_TOOLS.find((tool) => tool.name === "diagnostics");
+	if (!diagnosticsTool) throw new Error("lsp-tools-mcp does not provide a diagnostics tool");
+	return async (filePath) => {
+		try {
+			const result = await diagnosticsTool.run(
+				runtime,
+				{ filePath, severity: "error" },
+				{ signal: new AbortController().signal },
+			);
+			return result.data["total"] === 0 ? null : result.summary;
+		} catch (error) {
+			const failure = toToolFailure(error);
+			return SILENT_FAILURES.has(failure.code) ? null : `[${failure.code}] ${failure.message}`;
+		}
+	};
 }
 
 export async function runLspPostToolUseHook(
 	input: CodexPostToolUseInput,
-	runDiagnostics: DiagnosticsRunner = runLspDiagnosticsText,
+	runDiagnostics: DiagnosticsRunner,
 ): Promise<string> {
 	const filePaths = extractMutatedFilePaths(input);
 	if (filePaths.length === 0) return "";
 
 	const blocks: DiagnosticBlock[] = [];
 	for (const filePath of filePaths) {
-		const diagnostics = (await runDiagnostics(filePath)).trim();
-		if (isCleanDiagnostics(diagnostics)) continue;
+		const diagnostics = (await runDiagnostics(filePath))?.trim();
+		if (!diagnostics) continue;
 		blocks.push({ filePath, diagnostics });
 	}
 
@@ -86,21 +100,19 @@ export async function runPostToolUseHookCli(stdin: NodeJS.ReadStream = processSt
 	if (!raw.trim()) return;
 	const parsed: unknown = JSON.parse(raw);
 	const input = isRecord(parsed) ? parsed : {};
-	const output = await runLspPostToolUseHook(input);
-	if (output) process.stdout.write(output);
+	const workspaceRoot = typeof input["cwd"] === "string" && input["cwd"].length > 0 ? input["cwd"] : cwd();
+	const runtime = createLspRuntime({ defaultWorkspaceRoot: workspaceRoot });
+	try {
+		const output = await runLspPostToolUseHook(input, createDiagnosticsRunner(runtime));
+		if (output) process.stdout.write(output);
+	} finally {
+		await runtime.dispose();
+	}
 }
 
 function isMutationTool(value: unknown): boolean {
 	if (typeof value !== "string") return false;
 	return MUTATION_TOOL_NAMES.has(value.toLowerCase());
-}
-
-function isCleanDiagnostics(diagnostics: string): boolean {
-	return (
-		diagnostics.length === 0 ||
-		diagnostics === CLEAN_DIAGNOSTICS_TEXT ||
-		diagnostics.startsWith(UNSUPPORTED_EXTENSION_TEXT)
-	);
 }
 
 function isFailedToolResponse(value: unknown): boolean {

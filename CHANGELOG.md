@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Development and CI use a pnpm workspace that includes the `lsp-tools-mcp` submodule through `workspace:*`.
+- The plugin uses the Codex compat layout (`.codex-plugin/plugin.json` + `.mcp.json`) and is staged by `pnpm run test:package` with a hoisted, link-free `node_modules`.
+- The MCP entry is the root CLI; it serves the `2026-07-28` MCP revision and reads the workspace from Codex turn metadata.
+
 ## 0.2.0
 
 - Extracted the LSP runtime and MCP server into [`@code-yeongyu/lsp-tools-mcp`](https://github.com/code-yeongyu/lsp-tools-mcp).
