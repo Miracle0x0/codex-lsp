@@ -2,8 +2,12 @@
 	"mcpServers": {
 		"lsp": {
 			"command": "node",
-			"args": ["./packages/lsp-tools-mcp/dist/cli.js", "mcp"],
-			"cwd": "."
+			"args": ["./dist/cli.js", "mcp"],
+			"cwd": ".",
+			"env": {
+				"CODEX_MCP_PROTOCOL_VERSION": "2026-07-28"
+			},
+			"env_vars": ["CODEX_LSP_CONTEXT_ID", "CODEX_LSP_ENV_MANIFEST"]
 		}
 	}
 }

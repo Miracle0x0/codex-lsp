@@ -3,7 +3,7 @@
 	"version": "0.2.0",
 	"description": "Codex plugin that exposes Language Server Protocol tools and post-edit diagnostics.",
 	"type": "module",
-	"packageManager": "npm@11.12.1",
+	"packageManager": "pnpm@12.11.2",
 	"license": "MIT",
 	"homepage": "https://github.com/code-yeongyu/codex-lsp",
 	"repository": {
@@ -36,21 +36,20 @@
 		"CHANGELOG.md"
 	],
 	"scripts": {
-		"bootstrap": "node scripts/bootstrap-submodule.mjs",
-		"prebuild": "node scripts/bootstrap-submodule.mjs",
 		"build": "tsc -p tsconfig.build.json",
-		"pretest": "node scripts/bootstrap-submodule.mjs",
 		"test": "vitest --run",
 		"test:watch": "vitest",
-		"pretypecheck": "node scripts/bootstrap-submodule.mjs",
 		"typecheck": "tsc --noEmit",
 		"lint": "biome check src test",
 		"lint:fix": "biome check --write src test",
-		"precheck": "node scripts/bootstrap-submodule.mjs",
-		"check": "tsc --noEmit && biome check src test && tsc -p tsconfig.build.json"
+		"check": "tsc --noEmit && biome check src test && tsc -p tsconfig.build.json",
+		"build:all": "pnpm -r run build",
+		"check:all": "pnpm -r run typecheck && pnpm -r run lint",
+		"test:all": "pnpm -r run test",
+		"test:package": "node scripts/package-plugin.mjs --verify"
 	},
 	"dependencies": {
-		"@code-yeongyu/lsp-tools-mcp": "file:./packages/lsp-tools-mcp"
+		"@code-yeongyu/lsp-tools-mcp": "workspace:*"
 	},
 	"devDependencies": {
 		"@biomejs/biome": "2.5.5",

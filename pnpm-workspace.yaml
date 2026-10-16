@@ -1,0 +1,3 @@
+packages:
+  - packages/lsp-tools-mcp
+includeWorkspaceRoot: true

@@ -12,10 +12,12 @@ Conventions for humans and agents working on this repository.
 
 ## Commands
 
-- `npm install` installs dependencies.
-- `npm test` runs the test suite once.
-- `npm run typecheck` runs strict TypeScript checking.
-- `npm run check` runs typecheck, Biome, and build.
+- `git submodule update --init --recursive` checks out the `lsp-tools-mcp` runtime.
+- `pnpm install --frozen-lockfile` installs the workspace (root + runtime submodule).
+- `pnpm run build:all` builds the runtime and the Codex adapter in dependency order.
+- `pnpm run check:all` runs typecheck and Biome in both packages.
+- `pnpm run test:all` runs both test suites once.
+- `pnpm run test:package` stages the plugin with `pnpm deploy` (hoisted, no symlinks) and starts it outside the source tree.
 
 ## LSP Constraints
 

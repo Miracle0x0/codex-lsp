@@ -70,12 +70,12 @@ Built-in server definitions are used when no custom config overrides them. `lsp.
 
 The plugin ships:
 
-- `.codex-plugin/plugin.json` for Codex plugin discovery.
-- `.mcp.json` for the `lsp` MCP server.
+- `.codex-plugin/plugin.json` for Codex plugin discovery (Codex compat layout).
+- `.mcp.json` for the `lsp` MCP server, started from the plugin root with `node ./dist/cli.js mcp`.
 - `hooks/hooks.json` for the `PostToolUse` diagnostics hook.
 - `skills/lsp/SKILL.md` with MCP usage guidance.
 
-The runtime depends on `@code-yeongyu/lsp-tools-mcp` via `file:./packages/lsp-tools-mcp`, so marketplace builds must include submodule contents.
+The runtime depends on `@code-yeongyu/lsp-tools-mcp` via `workspace:*`. Marketplace builds come from `pnpm run test:package`, which stages a self-contained plugin under `artifacts/codex-lsp-plugin` with a hoisted `node_modules` (Codex drops symbolic links when it installs a plugin).
 
 The hook command is:
 
@@ -86,23 +86,21 @@ node "${PLUGIN_ROOT}/dist/cli.js" hook post-tool-use
 The MCP command is:
 
 ```bash
-node ./packages/lsp-tools-mcp/dist/cli.js mcp
+node ./dist/cli.js mcp
 ```
 
 ## Local Development
 
 ```bash
 git submodule update --init --recursive
-npm run bootstrap     # installs + builds the lsp-tools-mcp submodule
-npm install
-npm test
-npm run typecheck
-npm run check
-npm pack --dry-run
+pnpm install --frozen-lockfile
+pnpm run build:all
+pnpm run check:all
+pnpm run test:all
+pnpm run test:package
 ```
 
-The `bootstrap` script installs and builds the `lsp-tools-mcp` git submodule so
-`@code-yeongyu/lsp-tools-mcp/dist/*.js` is available for the codex-lsp build.
+The root package depends on the runtime through `workspace:*`, so a missing submodule fails the install instead of silently using a stale build.
 
 Smoke-test the hook:
 
