@@ -2,7 +2,7 @@ import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-import { launchBinding } from "../src/environment-binding.js";
+import { launchBinding } from "../src/environment/binding.js";
 
 const STATE = "/state/codex-lsp";
 const ID = "env-launch-0001";

@@ -28,6 +28,7 @@
 		"dist",
 		"hooks",
 		"skills",
+		"shell",
 		".codex-plugin",
 		".mcp.json",
 		"LICENSE",

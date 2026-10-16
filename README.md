@@ -45,6 +45,21 @@ Errors and warnings are reported by default; set `diagnostics.minimumSeverity` i
 
 `lsp.rename` applies the returned workspace edit to files. Use `lsp.prepare_rename` first when possible.
 
+`pre_edit_snapshot` and `post_edit_diagnostics` are also listed; they are the hook endpoints and are not meant to be called by the model.
+
+## Shell Environments
+
+Diagnostics and navigation use the language environment of the shell you work in (an activated venv, uv project environment, Conda env, Node version, Go or Rust toolchain), not the environment Codex happened to start the plugin with. A process cannot read another shell's variables, so the shell hands them over explicitly:
+
+| Entry | Use |
+|-------|-----|
+| `codex-lsp launch [codex args...]` | Run instead of `codex` from the shell whose environment should be used. It captures a launch snapshot and starts `codex --no-daemon` with `CODEX_LSP_CONTEXT_ID` / `CODEX_LSP_ENV_MANIFEST` set; the plugin's MCP server reads them. Without `--no-daemon`, a shared Codex daemon would keep its own start-up environment. |
+| `eval "$(codex-lsp env shell-init zsh)"` (also `bash`, `pwsh`) | Shell integration for your rc file. It gives the shell its own environment id and records a new generation at the next prompt whenever the watched variables or the directory change. Existing prompt hooks and exit codes are kept. |
+| `codex-lsp env capture --kind command` | Snapshots the calling environment and prints its id; tools accept it as `environmentId` (for example after `source .venv/bin/activate` in one command). |
+| `codex-lsp config mcp [--environment-id <id>]` | Prints reviewable `config.toml` for using codex-lsp without the plugin, optionally pinned to one shell's environment id (a desktop or daemon-hosted Codex then follows that shell's activations). Nothing is written. |
+
+Run the CLI as `node <plugin>/dist/cli.js` or from an npm install (`codex-lsp`). Snapshots live in `$XDG_STATE_HOME/codex-lsp` (or `~/.local/state/codex-lsp`, `%LOCALAPPDATA%\codex-lsp`; override with `CODEX_LSP_STATE_DIR`), only contain the variables language tooling needs, and are written with private permissions. Without any binding, `lsp.status` reports the environment as unbound and tools use the MCP process environment.
+
 ## Configuration
 
 Project config:

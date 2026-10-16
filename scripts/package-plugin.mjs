@@ -25,6 +25,9 @@ const requiredFiles = [
 	".mcp.json",
 	"hooks/hooks.json",
 	"skills/lsp/SKILL.md",
+	"shell/codex-lsp.bash",
+	"shell/codex-lsp.zsh",
+	"shell/codex-lsp.ps1",
 	"dist/cli.js",
 	"node_modules/@code-yeongyu/lsp-tools-mcp/package.json",
 ];

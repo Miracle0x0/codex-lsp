@@ -1,13 +1,44 @@
 #!/usr/bin/env node
-import { argv, env, stderr } from "node:process";
+import { realpathSync } from "node:fs";
+import { argv, cwd, env, stderr, stdout } from "node:process";
+import { fileURLToPath } from "node:url";
 
-import { createLspRuntime, LSP_TOOLS, type RegisteredLspTool, serveLspStdio } from "@code-yeongyu/lsp-tools-mcp";
+import {
+	createLspRuntime,
+	ENVIRONMENT_ID_PATTERN,
+	LSP_TOOLS,
+	manifestPath,
+	type RegisteredLspTool,
+	readManifest,
+	serveLspStdio,
+} from "@code-yeongyu/lsp-tools-mcp";
 
 import { resolveCodexContext } from "./codex-context.js";
-import { launchBinding } from "./environment-binding.js";
+import { mcpConfigToml } from "./config-mcp.js";
+import { captureStateDir, launchBinding } from "./environment/binding.js";
+import { captureEnvironment } from "./environment/capture.js";
+import { type CliCommand, isShellName, SHELLS, shellInitScript } from "./environment/shell-init.js";
 import { BaselineStore } from "./hook/baseline.js";
 import { EditFeedback } from "./hook/edit-feedback.js";
 import { postEditDiagnosticsTool, preEditSnapshotTool, recordingRename } from "./hook/tools.js";
+import { launch } from "./launch.js";
+
+const USAGE = `Usage:
+  codex-lsp mcp                                  serve the MCP server (started by Codex)
+  codex-lsp launch [codex arguments...]          capture this shell's environment and start Codex with it
+  codex-lsp env capture [--kind shell|command] [--shell <name>]  snapshot this shell's environment; prints the environment id
+  codex-lsp env shell-init <${SHELLS.join("|")}>          print shell integration to eval in your shell rc
+  codex-lsp config mcp [--environment-id <id>]   print Codex config for using codex-lsp without the plugin
+`;
+
+class UsageError extends Error {
+	override readonly name = "UsageError";
+}
+
+/** Absolute node and script paths; the real node path survives version-manager shims. */
+function cliCommand(): CliCommand {
+	return { node: realpathSync(process.execPath), script: fileURLToPath(import.meta.url) };
+}
 
 async function serveMcp(): Promise<void> {
 	const binding = launchBinding(env);
@@ -35,17 +66,100 @@ async function serveMcp(): Promise<void> {
 	process.once("SIGTERM", () => void shutdown());
 }
 
-async function main(): Promise<void> {
-	const [command = "mcp"] = argv.slice(2);
-	if (command === "mcp") {
-		await serveMcp();
+function option(args: readonly string[], name: string): string | undefined {
+	const index = args.indexOf(name);
+	if (index === -1) return undefined;
+	const value = args[index + 1];
+	if (value === undefined || value.startsWith("--")) throw new UsageError(`${name} needs a value`);
+	return value;
+}
+
+function envCommand(args: readonly string[]): void {
+	const [subcommand, ...rest] = args;
+	if (subcommand === "capture") {
+		const kind = option(rest, "--kind") ?? "command";
+		if (kind !== "shell" && kind !== "command") throw new UsageError("--kind must be shell or command");
+		const shellName = option(rest, "--shell");
+		if (shellName !== undefined && !isShellName(shellName)) {
+			throw new UsageError(`--shell must be one of: ${SHELLS.join(", ")}`);
+		}
+		const result = captureEnvironment({
+			kind,
+			stateDir: captureStateDir(env),
+			env,
+			cwd: cwd(),
+			shellPid: process.ppid,
+			...(shellName === undefined ? {} : { shellName }),
+		});
+		stdout.write(`${result.snapshot.environmentId}\n`);
 		return;
 	}
-	stderr.write("Usage: codex-lsp mcp\n");
-	process.exitCode = 2;
+	if (subcommand === "shell-init") {
+		const shell = rest[0] ?? "";
+		if (!isShellName(shell)) throw new UsageError(`shell-init needs one of: ${SHELLS.join(", ")}`);
+		stdout.write(shellInitScript(shell, cliCommand()));
+		return;
+	}
+	throw new UsageError(`unknown env command: ${subcommand ?? "(none)"}`);
+}
+
+function configCommand(args: readonly string[]): void {
+	const [subcommand, ...rest] = args;
+	if (subcommand !== "mcp") throw new UsageError(`unknown config command: ${subcommand ?? "(none)"}`);
+	const environmentId = option(rest, "--environment-id");
+	let pinned: { environmentId: string; manifestPath: string } | undefined;
+	if (environmentId !== undefined) {
+		if (!ENVIRONMENT_ID_PATTERN.test(environmentId)) throw new UsageError(`invalid environment id: ${environmentId}`);
+		const stateDir = captureStateDir(env);
+		if (readManifest(stateDir, environmentId) === undefined) {
+			throw new UsageError(`no captured environment ${environmentId} in ${stateDir}`);
+		}
+		pinned = { environmentId, manifestPath: manifestPath(stateDir, environmentId) };
+	}
+	stdout.write(
+		mcpConfigToml({
+			cli: cliCommand(),
+			hooksPath: fileURLToPath(new URL("../hooks/hooks.json", import.meta.url)),
+			...(pinned === undefined ? {} : { pinned }),
+		}),
+	);
+}
+
+async function main(): Promise<void> {
+	const [command = "mcp", ...args] = argv.slice(2);
+	switch (command) {
+		case "mcp":
+			await serveMcp();
+			return;
+		case "launch":
+			process.exitCode = await launch({
+				codexArgs: args[0] === "--" ? args.slice(1) : args,
+				stateDir: captureStateDir(env),
+				env,
+				cwd: cwd(),
+			});
+			return;
+		case "env":
+			envCommand(args);
+			return;
+		case "config":
+			configCommand(args);
+			return;
+		case "help":
+		case "--help":
+			stdout.write(USAGE);
+			return;
+		default:
+			throw new UsageError(`unknown command: ${command}`);
+	}
 }
 
 main().catch((error: unknown) => {
-	stderr.write(`${error instanceof Error ? (error.stack ?? error.message) : String(error)}\n`);
+	if (error instanceof UsageError) {
+		stderr.write(`codex-lsp: ${error.message}\n\n${USAGE}`);
+		process.exitCode = 2;
+		return;
+	}
+	stderr.write(`codex-lsp: ${error instanceof Error ? error.message : String(error)}\n`);
 	process.exitCode = 1;
 });

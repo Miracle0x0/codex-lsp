@@ -1,6 +1,8 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
+import { placeholder } from "./helpers/placeholder.js";
+
 type JsonRecord = Record<string, unknown>;
 
 function readJson(path: string): JsonRecord {
@@ -87,10 +89,6 @@ describe("plugin package metadata", () => {
 		expect(skill.includes("not shell commands")).toBe(true);
 	});
 });
-
-function placeholder(field: string): string {
-	return ["$", "{", field, "}"].join("");
-}
 
 function isRecord(value: unknown): value is JsonRecord {
 	return typeof value === "object" && value !== null && !Array.isArray(value);

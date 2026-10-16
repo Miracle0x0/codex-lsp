@@ -22,6 +22,20 @@ Positions are a 1-based `line` and a 0-based `character` counted in Unicode code
 - `lsp.prepare_rename`: check whether a rename is valid at a position.
 - `lsp.rename`: apply a language-server workspace edit for a rename.
 
+## After Edits
+
+The plugin's hooks check every `apply_patch` and shell command automatically and add new, resolved, or unattributed problems to the conversation; you do not need to call `lsp.diagnostics` after each edit, and never call `pre_edit_snapshot` or `post_edit_diagnostics` yourself. Call `lsp.diagnostics` for files or directories the edit did not touch, or when feedback says a check was incomplete.
+
+## Environments
+
+Results use the shell environment Codex was launched from (see `lsp.status` → `environment`). To analyze with an environment you activate inside a command, capture it in the same command and pass the printed id as `environmentId`:
+
+```bash
+source .venv/bin/activate && node <plugin root>/dist/cli.js env capture --kind command
+```
+
+The plugin root is two directories above this SKILL.md.
+
 ## Config
 
 Project config lives at `.codex/lsp-client.json`; user config lives at `~/.codex/lsp-client.json`.

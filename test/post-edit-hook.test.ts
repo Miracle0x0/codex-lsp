@@ -186,3 +186,28 @@ describe("post_edit_diagnostics hook", () => {
 		expect(session.fakeLog()).toEqual([]);
 	});
 });
+
+describe("post_edit_diagnostics failures", () => {
+	it("#given the language server is not installed #when a file is edited #then the hook reports it instead of staying silent", async () => {
+		// given
+		const session = await start();
+		session.write(
+			"lsp-client.json",
+			JSON.stringify({
+				schemaVersion: 1,
+				servers: { ghost: { command: ["codex-lsp-no-such-server"], installHint: "npm install -g ghost-ls" } },
+				languages: { ghost: { extensions: [".ghost"], semanticServer: "ghost", diagnosticServers: ["ghost"] } },
+			}),
+		);
+		const path = session.write("a.ghost", "x\n");
+
+		// when
+		const output = await toolCall(session, "apply_patch", update(path), () => writeFileSync(path, "y\n"));
+
+		// then
+		const context = contextOf(output);
+		expect(context).toContain("Diagnostics incomplete:");
+		expect(context).toContain("not installed");
+		expect(context).toContain("npm install -g ghost-ls");
+	});
+});

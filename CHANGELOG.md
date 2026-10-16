@@ -12,7 +12,10 @@
 - apply_patch Add/Update/Delete/Move are all handled; shell edits come from a workspace file-change journal; results are diffed against a per-session baseline (new, resolved, first check) and reported as `additionalContext` without blocking the edit.
 - Errors and warnings are reported by default; provider failures are always reported.
 - The MCP process binds the launcher's environment from `CODEX_LSP_CONTEXT_ID` / `CODEX_LSP_ENV_MANIFEST` (validated; the manifest path names the state directory).
-- `test/codex-contract.test.ts` (`CODEX_LSP_CONTRACT=1`) checks the hook contract in a real Codex session.
+- `test/codex-contract.test.ts` (`CODEX_LSP_CONTRACT=1`) checks the hook contract and the launcher in real Codex sessions.
+- `codex-lsp launch` captures the shell's environment and starts `codex --no-daemon` bound to it; `codex-lsp env shell-init bash|zsh|pwsh` keeps a per-shell snapshot current at each prompt; `codex-lsp env capture --kind command` snapshots a command's environment for `environmentId`; `codex-lsp config mcp` prints reviewable config for use without the plugin.
+- The `hook post-tool-use` command and its fixtures are removed; the README's `install-local.mjs` instructions are replaced by the verified `codex plugin marketplace add` / `codex plugin add` flow.
+- CI installs zsh for the shell integration tests; pwsh is tested on the CI runners.
 
 ## 0.2.0
 

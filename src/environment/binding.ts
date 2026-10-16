@@ -7,6 +7,11 @@ export const CONTEXT_ID_ENV = "CODEX_LSP_CONTEXT_ID";
 export const MANIFEST_ENV = "CODEX_LSP_ENV_MANIFEST";
 export const STATE_DIR_ENV = "CODEX_LSP_STATE_DIR";
 
+/** Where captures are written: `CODEX_LSP_STATE_DIR`, else the platform state directory. */
+export function captureStateDir(env: NodeJS.ProcessEnv): string {
+	return defaultStateDir("codex-lsp", STATE_DIR_ENV, env);
+}
+
 export interface LaunchBinding {
 	readonly stateDir: string;
 	/** Environment captured by the launcher for this Codex process; undefined when none is bound. */
@@ -19,7 +24,7 @@ export interface LaunchBinding {
  * also names the state directory; a manifest that does not fit that layout or the id is rejected.
  */
 export function launchBinding(env: NodeJS.ProcessEnv): LaunchBinding {
-	const fallback = defaultStateDir("codex-lsp", STATE_DIR_ENV, env);
+	const fallback = captureStateDir(env);
 	const id = env[CONTEXT_ID_ENV];
 	const manifest = env[MANIFEST_ENV];
 	if (id === undefined || id === "") return { stateDir: fallback, environmentId: undefined, warnings: [] };

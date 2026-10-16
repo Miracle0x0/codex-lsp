@@ -40,6 +40,10 @@ jobs:
       - name: Install workspace
         run: pnpm install --frozen-lockfile
 
+      - name: Install zsh for shell integration tests
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y zsh
+
       - name: Build
         run: pnpm run build:all
 
