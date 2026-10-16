@@ -49,6 +49,35 @@ describe("plugin package metadata", () => {
 		expect(files).toEqual(expect.arrayContaining([".codex-plugin", ".mcp.json", "hooks", "skills", "dist"]));
 	});
 
+	it("#given the plugin hooks #when validating #then PreToolUse and PostToolUse call the lsp hook endpoints", () => {
+		// given
+		const hooks = record(readJson("hooks/hooks.json")["hooks"], "hooks");
+		const mcpJson = readJson(".mcp.json");
+		const lspServer = record(record(mcpJson["mcpServers"], "mcpServers")["lsp"], "mcpServers.lsp");
+
+		// when
+		const handler = (event: string): JsonRecord => {
+			const groups = hooks[event];
+			if (!Array.isArray(groups) || groups.length !== 1) throw new TypeError(`Expected one ${event} group`);
+			const group = record(groups[0], `${event}[0]`);
+			expect(group["matcher"]).toBe("^(apply_patch|Bash)$");
+			const handlers = group["hooks"];
+			if (!Array.isArray(handlers) || handlers.length !== 1) throw new TypeError(`Expected one ${event} hook`);
+			return record(handlers[0], `${event}[0].hooks[0]`);
+		};
+
+		// then
+		expect(handler("PreToolUse")).toMatchObject({ type: "mcp_tool", server: "lsp", tool: "pre_edit_snapshot" });
+		expect(handler("PostToolUse")).toMatchObject({
+			type: "mcp_tool",
+			server: "lsp",
+			tool: "post_edit_diagnostics",
+			// Whole-value placeholders keep the JSON type of the event fields.
+			input: { toolInput: placeholder("tool_input"), toolResponse: placeholder("tool_response") },
+		});
+		expect(record(lspServer["env"], "env")["CODEX_MCP_PROTOCOL_VERSION"]).toBe("2026-07-28");
+	});
+
 	it("#given LSP skill guidance #when validating MCP tool instructions #then tool names are not framed as shell commands", () => {
 		// given
 		const skill = readFileSync("skills/lsp/SKILL.md", "utf8");
@@ -58,6 +87,10 @@ describe("plugin package metadata", () => {
 		expect(skill.includes("not shell commands")).toBe(true);
 	});
 });
+
+function placeholder(field: string): string {
+	return ["$", "{", field, "}"].join("");
+}
 
 function isRecord(value: unknown): value is JsonRecord {
 	return typeof value === "object" && value !== null && !Array.isArray(value);

@@ -9,6 +9,7 @@ Conventions for humans and agents working on this repository.
 - Tabs for indentation. Double quotes for strings.
 - Runtime is Node only.
 - Tests use vitest and should exercise Codex hook/MCP behavior before implementation changes.
+- Hooks are `mcp_tool` handlers on the bare server name `lsp`; hook endpoints return Codex hook output JSON as their text content and never throw.
 
 ## Commands
 

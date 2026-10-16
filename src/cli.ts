@@ -1,16 +1,31 @@
 #!/usr/bin/env node
-import { argv, stderr } from "node:process";
+import { argv, env, stderr } from "node:process";
 
-import { createLspRuntime, LSP_TOOLS, serveLspStdio } from "@code-yeongyu/lsp-tools-mcp";
+import { createLspRuntime, LSP_TOOLS, type RegisteredLspTool, serveLspStdio } from "@code-yeongyu/lsp-tools-mcp";
 
 import { resolveCodexContext } from "./codex-context.js";
-import { runPostToolUseHookCli } from "./codex-hook.js";
+import { launchBinding } from "./environment-binding.js";
+import { BaselineStore } from "./hook/baseline.js";
+import { EditFeedback } from "./hook/edit-feedback.js";
+import { postEditDiagnosticsTool, preEditSnapshotTool, recordingRename } from "./hook/tools.js";
 
 async function serveMcp(): Promise<void> {
+	const binding = launchBinding(env);
+	for (const warning of binding.warnings) stderr.write(`codex-lsp: ${warning}\n`);
 	// The plugin process starts in the plugin directory, so there is no default workspace root:
-	// each call's workspace comes from Codex turn metadata or explicit tool arguments.
-	const runtime = createLspRuntime();
-	const handle = serveLspStdio(runtime, { tools: LSP_TOOLS, resolveContext: resolveCodexContext });
+	// each call's workspace comes from Codex turn metadata, the hook's cwd, or explicit tool arguments.
+	const runtime = createLspRuntime({
+		stateDir: binding.stateDir,
+		...(binding.environmentId === undefined ? {} : { defaultEnvironmentId: binding.environmentId }),
+	});
+	const baselines = new BaselineStore();
+	const feedback = new EditFeedback(runtime, baselines);
+	const tools: RegisteredLspTool[] = [
+		...LSP_TOOLS.map((tool) => (tool.name === "rename" ? recordingRename(tool, baselines) : tool)),
+		preEditSnapshotTool(feedback),
+		postEditDiagnosticsTool(feedback),
+	];
+	const handle = serveLspStdio(runtime, { tools, resolveContext: resolveCodexContext });
 	const shutdown = async (): Promise<void> => {
 		await handle.close();
 		await runtime.dispose();
@@ -21,19 +36,12 @@ async function serveMcp(): Promise<void> {
 }
 
 async function main(): Promise<void> {
-	const [command = "mcp", subcommand = ""] = argv.slice(2);
-
-	if (command === "hook" && subcommand === "post-tool-use") {
-		await runPostToolUseHookCli();
-		return;
-	}
-
+	const [command = "mcp"] = argv.slice(2);
 	if (command === "mcp") {
 		await serveMcp();
 		return;
 	}
-
-	stderr.write("Usage: codex-lsp [mcp | hook post-tool-use]\n");
+	stderr.write("Usage: codex-lsp mcp\n");
 	process.exitCode = 2;
 }
 

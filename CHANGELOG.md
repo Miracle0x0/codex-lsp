@@ -8,6 +8,11 @@
 - Picks up the runtime's config schema v1, multi-source diagnostics, and shell-environment binding; `pnpm run test:integration` runs the real-language-server suite.
 - Adds `lsp.hover`, `lsp.goto_implementation`, and call hierarchy tools (`lsp.prepare_call_hierarchy`, `lsp.incoming_calls`, `lsp.outgoing_calls`); TypeScript navigation no longer returns single-file results while the project loads.
 - `pnpm run test:package` builds both packages before staging so the artifact never ships a stale runtime.
+- Post-edit diagnostics run inside the long-lived MCP process through native `mcp_tool` hooks (`pre_edit_snapshot` on PreToolUse, `post_edit_diagnostics` on PostToolUse) for `apply_patch` and `Bash`, replacing the `hook post-tool-use` command that started language servers per edit.
+- apply_patch Add/Update/Delete/Move are all handled; shell edits come from a workspace file-change journal; results are diffed against a per-session baseline (new, resolved, first check) and reported as `additionalContext` without blocking the edit.
+- Errors and warnings are reported by default; provider failures are always reported.
+- The MCP process binds the launcher's environment from `CODEX_LSP_CONTEXT_ID` / `CODEX_LSP_ENV_MANIFEST` (validated; the manifest path names the state directory).
+- `test/codex-contract.test.ts` (`CODEX_LSP_CONTRACT=1`) checks the hook contract in a real Codex session.
 
 ## 0.2.0
 

@@ -6,24 +6,27 @@ Codex plugin that ports the standalone LSP runtime from [`pi-lsp-client`](https:
 
 ## Architecture
 
-The LSP runtime moved to [`lsp-tools-mcp`](https://github.com/code-yeongyu/lsp-tools-mcp) and is consumed here as a git submodule at `packages/lsp-tools-mcp/`.
+The LSP runtime lives in [`lsp-tools-mcp`](https://github.com/code-yeongyu/lsp-tools-mcp), consumed here as a git submodule at `packages/lsp-tools-mcp/`.
 
-- `codex-lsp` keeps Codex-specific integration (`hook post-tool-use`, plugin metadata, package wiring).
-- `lsp-tools-mcp` owns MCP runtime, LSP manager, and tool implementations.
-- `src/cli.ts` routes `mcp` to upstream runtime and keeps `hook post-tool-use` local.
+- `lsp-tools-mcp` owns the MCP server, LSP process management, documents, diagnostics, edits, and the standard tools.
+- `codex-lsp` composes one long-running MCP process for Codex (`src/cli.ts`): the standard tools, two hook endpoints (`src/hook/`), Codex turn-metadata parsing (`src/codex-context.ts`), and the launch environment binding (`src/environment-binding.ts`).
 
-## Behavior
+Codex calls the hook endpoints through native `mcp_tool` hooks, so edits are checked by the language servers that are already running instead of a new process per edit.
+
+## Post-Edit Diagnostics
 
 | Case | Result |
 |------|--------|
-| `apply_patch` succeeds | parses `tool_input.command`, extracts added/updated/moved files, and checks each with LSP error diagnostics |
-| `write` / `edit` / `multiedit` succeeds | checks `path`, `filePath`, or `file_path` aliases |
-| diagnostics contain errors | returns Codex `PostToolUse` blocking feedback and injects the same diagnostics as additional context so Codex fixes the file |
-| no diagnostics | emits no hook output |
-| unsupported extension | emits no hook output |
-| missing configured language server | surfaces the install/config message through hook or MCP output |
+| `apply_patch` (add, update, delete, move) | PreToolUse records diagnostics for files the patch will touch; PostToolUse syncs servers with the change and checks the result |
+| `Bash` command | PreToolUse marks the workspace file-change journal; PostToolUse checks files the command created or changed (dependency and build directories are not watched) |
+| new problems | reported as `additionalContext` with file, position, provider, code, and message; the edit is never blocked |
+| problems that existed before | not reported again; a file first seen through a shell command is labelled "not attributed to this edit" |
+| fixed problems | reported as resolved |
+| documents already open in a language server | rechecked so breakage in importers shows up |
+| failed patch, unsupported extension, or nothing new | empty hook output |
+| provider failure, timeout, or missing server | reported, never deduplicated away |
 
-Deletes are ignored because they cannot introduce new diagnostics.
+Errors and warnings are reported by default; set `diagnostics.minimumSeverity` in the config to change that. `lsp.rename` checks the files it writes and feeds the same baseline, so a following edit does not re-report the rename's results.
 
 ## MCP Tools
 
@@ -73,23 +76,13 @@ Each language routes to one built-in server by default; the example adds Ruff ne
 The plugin ships:
 
 - `.codex-plugin/plugin.json` for Codex plugin discovery (Codex compat layout).
-- `.mcp.json` for the `lsp` MCP server, started from the plugin root with `node ./dist/cli.js mcp`.
-- `hooks/hooks.json` for the `PostToolUse` diagnostics hook.
+- `.mcp.json` for the `lsp` MCP server, started from the plugin root with `node ./dist/cli.js mcp`. It sets `CODEX_MCP_PROTOCOL_VERSION=2026-07-28` (without it Codex 0.163.0 fails every `mcp_tool` hook call) and forwards `CODEX_LSP_CONTEXT_ID` / `CODEX_LSP_ENV_MANIFEST`, the shell environment captured at launch.
+- `hooks/hooks.json` with `mcp_tool` hooks on `apply_patch` and `Bash`: `pre_edit_snapshot` (PreToolUse) and `post_edit_diagnostics` (PostToolUse) on the `lsp` server.
 - `skills/lsp/SKILL.md` with MCP usage guidance.
 
-The runtime depends on `@code-yeongyu/lsp-tools-mcp` via `workspace:*`. Marketplace builds come from `pnpm run test:package`, which stages a self-contained plugin under `artifacts/codex-lsp-plugin` with a hoisted `node_modules` (Codex drops symbolic links when it installs a plugin).
+The runtime depends on `@code-yeongyu/lsp-tools-mcp` via `workspace:*`. Marketplace builds come from `pnpm run test:package`, which builds both packages and stages a self-contained plugin under `artifacts/codex-lsp-plugin` with a hoisted `node_modules` (Codex drops symbolic links when it installs a plugin).
 
-The hook command is:
-
-```bash
-node "${PLUGIN_ROOT}/dist/cli.js" hook post-tool-use
-```
-
-The MCP command is:
-
-```bash
-node ./dist/cli.js mcp
-```
+Requirements: Codex with the `mcp_2026_07_28` feature enabled, Node 20 or newer, and the language servers for your languages on `PATH`.
 
 ## Local Development
 
@@ -99,43 +92,41 @@ pnpm install --frozen-lockfile
 pnpm run build:all
 pnpm run check:all
 pnpm run test:all
+pnpm run test:integration   # real Pyright, Ruff, typescript-language-server, gopls
 pnpm run test:package
 ```
 
 The root package depends on the runtime through `workspace:*`, so a missing submodule fails the install instead of silently using a stale build.
 
-Smoke-test the hook:
+`pnpm test` covers the hook endpoints end to end against `dist/cli.js` with a fake language server. The real-host contract runs Codex itself in a temporary `CODEX_HOME`, installs the staged plugin, and checks that diagnostics reach the session after `apply_patch` and a shell command (needs network, Codex auth, and Pyright):
 
 ```bash
-node dist/cli.js hook post-tool-use < test/fixtures/post-tool-use.json
-```
-
-Smoke-test the MCP server:
-
-```bash
-printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' | node dist/cli.js mcp
+pnpm run test:package
+CODEX_LSP_CONTRACT=1 pnpm exec vitest --run test/codex-contract.test.ts
 ```
 
 ## Local Codex Installation
 
-From the marketplace root containing this plugin:
+Point a local marketplace at a directory whose `.agents/plugins/marketplace.json` lists the staged plugin (`artifacts/codex-lsp-plugin`), then:
 
 ```bash
-codex plugin marketplace add /path/to/codex-plugins
-node /path/to/codex-plugins/scripts/install-local.mjs /path/to/codex-plugins
+codex plugin marketplace add /path/to/marketplace
+codex plugin add codex-lsp@<marketplace-name>
 ```
 
-If your local Codex build exposes plugin install commands, you can install from the UI or CLI instead. For older local builds, the marketplace installer builds and copies the plugin into `~/.codex/plugins/cache/<marketplace>/omo/0.1.0` and enables:
+and enable the protocol revision in `~/.codex/config.toml`:
 
 ```toml
-[plugins."omo@code-yeongyu-codex-plugins"]
-enabled = true
+[features]
+mcp_2026_07_28 = true
 ```
+
+Plugin hooks run after you trust them in Codex.
 
 ## Branch Rules and Releases
 
 - `main` is protected by `.github/branch-ruleset.json`.
-- CI runs Node 20 and 22 on Ubuntu, macOS, and Windows.
+- CI runs Node 20, 22, and 24 on Ubuntu, macOS, and Windows.
 - Releases are GitHub Releases tagged as `v<semver>`.
 - Publishing runs from the `publish` workflow after a GitHub Release is published.
 

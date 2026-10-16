@@ -1,14 +1,44 @@
 {
 	"hooks": {
-		"PostToolUse": [
+		"PreToolUse": [
 			{
-				"matcher": "^(apply_patch|Write|Edit|MultiEdit|multi_edit|write|edit|multiedit)$",
+				"matcher": "^(apply_patch|Bash)$",
 				"hooks": [
 					{
-						"type": "command",
-						"command": "node \"${PLUGIN_ROOT}/dist/cli.js\" hook post-tool-use",
+						"type": "mcp_tool",
+						"server": "lsp",
+						"tool": "pre_edit_snapshot",
+						"timeout": 30,
+						"input": {
+							"sessionId": "${session_id}",
+							"toolUseId": "${tool_use_id}",
+							"cwd": "${cwd}",
+							"toolName": "${tool_name}",
+							"toolInput": "${tool_input}"
+						}
+					}
+				]
+			}
+		],
+		"PostToolUse": [
+			{
+				"matcher": "^(apply_patch|Bash)$",
+				"hooks": [
+					{
+						"type": "mcp_tool",
+						"server": "lsp",
+						"tool": "post_edit_diagnostics",
 						"timeout": 60,
-						"statusMessage": "checking LSP diagnostics"
+						"statusMessage": "checking LSP diagnostics",
+						"input": {
+							"sessionId": "${session_id}",
+							"turnId": "${turn_id}",
+							"toolUseId": "${tool_use_id}",
+							"cwd": "${cwd}",
+							"toolName": "${tool_name}",
+							"toolInput": "${tool_input}",
+							"toolResponse": "${tool_response}"
+						}
 					}
 				]
 			}

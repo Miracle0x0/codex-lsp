@@ -1,63 +1,29 @@
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { fileURLToPath } from "node:url";
 
-import { Client } from "@modelcontextprotocol/client";
-import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
 
 import { CODEX_TURN_METADATA_KEY } from "../src/codex-context.js";
+import { requireBuiltCli, type StdioSession, startCli, textOf } from "./helpers/stdio.js";
 
-const REPO_ROOT = fileURLToPath(new URL("..", import.meta.url));
-const CLI_PATH = join(REPO_ROOT, "dist", "cli.js");
-const FAKE_SERVER = join(REPO_ROOT, "packages", "lsp-tools-mcp", "test", "fixtures", "fake-lsp-server.mjs");
-const cleanups: Array<() => Promise<void> | void> = [];
+const sessions: StdioSession[] = [];
 
-beforeAll(() => {
-	if (!existsSync(CLI_PATH)) throw new Error(`${CLI_PATH} is missing; run pnpm run build:all first`);
-});
+beforeAll(requireBuiltCli);
 
 afterEach(async () => {
-	for (const cleanup of cleanups.splice(0).reverse()) await cleanup();
+	for (const session of sessions.splice(0)) await session.close();
 });
 
-async function connect(workspace: string): Promise<Client> {
-	const configPath = join(workspace, "lsp-client.json");
-	writeFileSync(
-		configPath,
-		JSON.stringify({
-			schemaVersion: 1,
-			servers: { fake: { command: [process.execPath, FAKE_SERVER] } },
-			languages: { fake: { extensions: [".fake"], semanticServer: "fake", diagnosticServers: ["fake"] } },
-		}),
-	);
-	const client = new Client({ name: "codex-lsp-test", version: "0.0.0" }, { versionNegotiation: { mode: "auto" } });
-	await client.connect(
-		new StdioClientTransport({
-			command: process.execPath,
-			args: [CLI_PATH, "mcp"],
-			// Codex starts plugin MCP servers from the plugin directory, not the user's workspace.
-			cwd: REPO_ROOT,
-			env: {
-				PATH: process.env["PATH"] ?? "",
-				HOME: process.env["HOME"] ?? "",
-				LSP_TOOLS_MCP_PROJECT_CONFIG: configPath,
-				LSP_TOOLS_MCP_USER_CONFIG: join(workspace, "no-user-config.json"),
-			},
-		}),
-	);
-	cleanups.push(() => client.close());
-	return client;
+async function start(): Promise<StdioSession> {
+	const session = await startCli();
+	sessions.push(session);
+	return session;
 }
 
 describe("codex-lsp MCP entry", () => {
 	it("#given Codex turn metadata naming the workspace #when a relative path is used #then it resolves inside that workspace", async () => {
 		// given
-		const workspace = mkdtempSync(join(tmpdir(), "codex-lsp-mcp-"));
-		cleanups.push(() => rmSync(workspace, { recursive: true, force: true }));
-		writeFileSync(join(workspace, "main.fake"), "abc\n");
-		const client = await connect(workspace);
+		const { client, workspace, write } = await start();
+		write("main.fake", "abc\n");
 
 		// when
 		const result = await client.callTool({
@@ -73,9 +39,7 @@ describe("codex-lsp MCP entry", () => {
 
 	it("#given no Codex metadata #when a relative path is used #then the plugin directory is not mistaken for the workspace", async () => {
 		// given
-		const workspace = mkdtempSync(join(tmpdir(), "codex-lsp-mcp-"));
-		cleanups.push(() => rmSync(workspace, { recursive: true, force: true }));
-		const client = await connect(workspace);
+		const { client } = await start();
 
 		// when
 		const result = await client.callTool({
@@ -85,6 +49,20 @@ describe("codex-lsp MCP entry", () => {
 
 		// then
 		expect(result.isError).toBe(true);
-		expect(JSON.stringify(result.content)).toContain("[invalid_path]");
+		expect(textOf(result)).toContain("[invalid_path]");
+	});
+
+	it("#given the plugin entry #when listing tools #then the standard tools and both hook endpoints are present", async () => {
+		// given
+		const { client } = await start();
+
+		// when
+		const { tools } = await client.listTools();
+
+		// then
+		expect(tools.map((tool) => tool.name)).toEqual(
+			expect.arrayContaining(["hover", "rename", "pre_edit_snapshot", "post_edit_diagnostics"]),
+		);
+		expect(tools).toHaveLength(14);
 	});
 });
