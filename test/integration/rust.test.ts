@@ -1,21 +1,16 @@
-import { existsSync, readdirSync } from "node:fs";
-import { homedir } from "node:os";
-import { join } from "node:path";
+import { mkdirSync, readdirSync } from "node:fs";
+import { dirname, join } from "node:path";
 
-import { afterEach, beforeAll, describe, expect, it } from "vitest";
-
-import { batchOf, createWorkspace, hoverOf, positionOf, requireTool, type Workspace } from "./helpers.js";
+import { afterEach, expect, it } from "vitest";
+import { findExecutable } from "../../src/core/lsp/command.js";
+import { toolchainEnv } from "../support/context.js";
+import { describeWithTools } from "../support/tools.js";
+import { batchOf, createWorkspace, hoverOf, positionOf, type Workspace } from "./helpers.js";
 
 const workspaces: Workspace[] = [];
 
 afterEach(async () => {
 	for (const created of workspaces.splice(0)) await created.close();
-});
-
-beforeAll(() => {
-	requireTool("cargo");
-	requireTool("rustc");
-	requireTool("rust-analyzer");
 });
 
 function crate(main: string): Workspace {
@@ -35,7 +30,7 @@ interface Toolchain {
 
 const toolchainOf = (data: Record<string, unknown>): Toolchain => (data["file"] as { toolchain: Toolchain }).toolchain;
 
-describe("Rust", () => {
+describeWithTools("Rust", ["cargo", "rustc", "rust-analyzer"], () => {
 	it("#given a crate with a type mismatch #when checking #then rust-analyzer reports it and hover resolves types", async () => {
 		// given
 		const source =
@@ -87,23 +82,37 @@ describe("Rust", () => {
 		expect(toolchain.facts["rustcVersion"]).toMatch(/^rustc \d+\.\d+/);
 		expect(toolchain.facts["sysroot"]).toBeTruthy();
 	});
+});
 
-	const rustupToolchains = join(process.env["RUSTUP_HOME"] ?? join(homedir(), ".rustup"), "toolchains");
-	it.runIf(existsSync(rustupToolchains))(
-		"#given rust-toolchain.toml naming a toolchain that is not installed #when resolving #then it fails without installing it",
-		async () => {
-			// given
+/** rustc is a rustup proxy when both come from the same directory (for example ~/.cargo/bin). */
+function rustcIsRustupProxy(): boolean {
+	const rustc = findExecutable("rustc", process.env);
+	const rustup = findExecutable("rustup", process.env);
+	return rustc !== undefined && rustup !== undefined && dirname(rustc) === dirname(rustup);
+}
+
+describeWithTools(
+	"Rust toolchain files",
+	["cargo", "rustc", "rustup", "rust-analyzer"],
+	() => {
+		it("#given rust-toolchain.toml naming a toolchain that is not installed #when resolving #then it fails without installing it", async () => {
+			// given: rustup state of its own, so whatever the machine has installed cannot satisfy the file
 			const w = crate("fn main() {}\n");
 			w.write("rust-toolchain.toml", '[toolchain]\nchannel = "1.40.0"\n');
-			const before = readdirSync(rustupToolchains).sort();
+			const rustupHome = join(w.root, ".rustup-isolated");
+			mkdirSync(rustupHome);
+			w.snapshot("env-rust-isolated", { ...toolchainEnv(), RUSTUP_HOME: rustupHome });
 
 			// when
-			const toolchain = toolchainOf((await w.call("status", { filePath: "src/main.rs" })).data);
+			const toolchain = toolchainOf(
+				(await w.call("status", { filePath: "src/main.rs", environmentId: "env-rust-isolated" })).data,
+			);
 
 			// then
 			expect(toolchain.status).toBe("unavailable");
 			expect(toolchain.facts["toolchainFile"]).toBe(join(w.root, "rust-toolchain.toml"));
-			expect(readdirSync(rustupToolchains).sort()).toEqual(before);
-		},
-	);
-});
+			expect(readdirSync(rustupHome).filter((entry) => entry === "toolchains" || entry === "downloads")).toEqual([]);
+		});
+	},
+	[{ name: "rustc managed by rustup", met: rustcIsRustupProxy() }],
+);

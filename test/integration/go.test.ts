@@ -1,5 +1,5 @@
-import { afterEach, beforeAll, describe, expect, it } from "vitest";
-
+import { afterEach, expect, it } from "vitest";
+import { describeWithTools } from "../support/tools.js";
 import {
 	batchOf,
 	callItemsOf,
@@ -8,7 +8,6 @@ import {
 	hoverOf,
 	locationsOf,
 	positionOf,
-	requireTool,
 	type Workspace,
 } from "./helpers.js";
 
@@ -25,12 +24,7 @@ afterEach(async () => {
 	for (const created of workspaces.splice(0)) await created.close();
 });
 
-beforeAll(() => {
-	requireTool("go");
-	requireTool("gopls");
-});
-
-describe("Go", () => {
+describeWithTools("Go", ["go", "gopls"], () => {
 	it("#given a module with a type error #when checking #then gopls reports it and status shows the Go toolchain", async () => {
 		// given
 		const w = module();

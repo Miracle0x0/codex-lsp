@@ -12,10 +12,11 @@ import { createLspRuntime, type LspRuntime } from "../../src/core/runtime/runtim
 import { CallsOutputSchema, PrepareCallHierarchyOutputSchema } from "../../src/core/tools/call-hierarchy.js";
 import { LSP_TOOLS } from "../../src/core/tools/index.js";
 import { HoverOutputSchema, LocationsOutputSchema } from "../../src/core/tools/navigation.js";
+import { toolchainEnv } from "../support/context.js";
 
 export const PACKAGE_ROOT = fileURLToPath(new URL("../..", import.meta.url));
 
-/** Integration tests fail loudly when a required tool is missing instead of skipping. */
+/** Locates a tool the enclosing suite declared (see describeWithTools); a missing one is an error here. */
 export function requireTool(name: string): string {
 	const found = findExecutable(name, process.env);
 	if (found === undefined) throw new Error(`integration test requires '${name}' on PATH`);
@@ -43,8 +44,14 @@ export function createWorkspace(config?: unknown): Workspace {
 		mkdirSync(join(root, ".codex"), { recursive: true });
 		writeFileSync(join(root, ".codex", "lsp-client.json"), JSON.stringify(config));
 	}
-	// The workspace is also the home directory, so only configuration the test writes is loaded.
-	const runtime = createLspRuntime({ config: { env: {}, homeDir: root }, defaultWorkspaceRoot: root, stateDir });
+	// The workspace is also the home directory, so only configuration the test writes is loaded. Servers run in
+	// the machine's toolchain environment without the variables that select an environment or configuration.
+	const runtime = createLspRuntime({
+		config: { env: {}, homeDir: root },
+		processEnv: toolchainEnv(),
+		defaultWorkspaceRoot: root,
+		stateDir,
+	});
 	const context: ToolCallContext = { signal: new AbortController().signal };
 	return {
 		root,
@@ -73,14 +80,17 @@ export function createWorkspace(config?: unknown): Workspace {
 }
 
 /** Environment of a shell that activated the venv: its bin first on PATH and VIRTUAL_ENV set. */
-export function activatedVenv(venv: string, base: NodeJS.ProcessEnv = process.env): Record<string, string | undefined> {
+export function activatedVenv(
+	venv: string,
+	base: NodeJS.ProcessEnv = toolchainEnv(),
+): Record<string, string | undefined> {
 	const bin = join(venv, process.platform === "win32" ? "Scripts" : "bin");
 	return { ...base, VIRTUAL_ENV: venv, PATH: [bin, base["PATH"] ?? ""].join(delimiter) };
 }
 
 export function activatedConda(
 	prefix: string,
-	base: NodeJS.ProcessEnv = process.env,
+	base: NodeJS.ProcessEnv = toolchainEnv(),
 ): Record<string, string | undefined> {
 	const { VIRTUAL_ENV: _venv, ...rest } = base;
 	return {
@@ -107,7 +117,12 @@ export function venvPython(venv: string): string {
 
 /** Installs a pure-Python module into a venv without pip or network access. */
 export function installModule(venv: string, name: string, source: string): void {
-	const purelib = execFileSync(venvPython(venv), ["-c", "import sysconfig; print(sysconfig.get_paths()['purelib'])"], {
+	installModuleWith(venvPython(venv), name, source);
+}
+
+/** Installs a pure-Python module into the site-packages of the given interpreter's environment. */
+export function installModuleWith(python: string, name: string, source: string): void {
+	const purelib = execFileSync(python, ["-c", "import sysconfig; print(sysconfig.get_paths()['purelib'])"], {
 		encoding: "utf8",
 	}).trim();
 	mkdirSync(join(purelib, name), { recursive: true });

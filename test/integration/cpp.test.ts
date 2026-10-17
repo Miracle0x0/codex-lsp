@@ -1,6 +1,6 @@
-import { afterEach, beforeAll, describe, expect, it } from "vitest";
-
-import { batchOf, createWorkspace, requireTool, type Workspace } from "./helpers.js";
+import { afterEach, expect, it } from "vitest";
+import { describeWithTools } from "../support/tools.js";
+import { batchOf, createWorkspace, type Workspace } from "./helpers.js";
 
 const workspaces: Workspace[] = [];
 
@@ -8,14 +8,10 @@ afterEach(async () => {
 	for (const created of workspaces.splice(0)) await created.close();
 });
 
-beforeAll(() => {
-	requireTool("clangd");
-});
-
 const SOURCE =
 	'#ifndef PROJECT_FLAG\n#error "PROJECT_FLAG missing"\n#endif\nint main() {\n\tint count = "text";\n\treturn count;\n}\n';
 
-describe("C/C++", () => {
+describeWithTools("C/C++", ["clangd"], () => {
 	it("#given a compile database with project flags #when checking #then clangd analyzes the file with those flags", async () => {
 		// given
 		const w = createWorkspace();

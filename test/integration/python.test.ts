@@ -1,10 +1,14 @@
-import { execFileSync } from "node:child_process";
-import { existsSync } from "node:fs";
-import { homedir } from "node:os";
+import { execFile, execFileSync } from "node:child_process";
+import { existsSync, mkdtempSync, realpathSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeAll, describe, expect, it } from "vitest";
+import { promisify } from "node:util";
+
+import { afterAll, afterEach, beforeAll, expect, it } from "vitest";
 
 import type { DiagnosticBatch } from "../../src/core/diagnostics/batch.js";
+import { findFirstExecutable } from "../../src/core/lsp/command.js";
+import { describeWithTools } from "../support/tools.js";
 import {
 	activatedConda,
 	activatedVenv,
@@ -15,10 +19,13 @@ import {
 	createWorkspace,
 	hoverOf,
 	installModule,
+	installModuleWith,
 	positionOf,
 	requireTool,
 	type Workspace,
 } from "./helpers.js";
+
+const execFileAsync = promisify(execFile);
 
 const PYTHON_MULTI_SOURCE = {
 	schemaVersion: 1,
@@ -37,12 +44,6 @@ afterEach(async () => {
 	for (const created of workspaces.splice(0)) await created.close();
 });
 
-beforeAll(() => {
-	requireTool("python3");
-	requireTool("pyright-langserver");
-	requireTool("ruff");
-});
-
 async function diagnose(w: Workspace, args: Record<string, unknown>): Promise<DiagnosticBatch> {
 	return batchOf((await w.call("diagnostics", args)).data);
 }
@@ -51,7 +52,7 @@ function codes(batch: DiagnosticBatch): string[] {
 	return batch.diagnostics.map((diagnostic) => `${diagnostic.providerId}:${String(diagnostic.code)}`).sort();
 }
 
-describe("Python environments", () => {
+describeWithTools("Python environments", ["python3", "pyright-langserver", "ruff", "uv"], () => {
 	it("#given two venvs with different dependency types #when the same file is checked in each #then diagnostics follow the bound venv", async () => {
 		// given
 		const w = workspace();
@@ -163,7 +164,7 @@ describe("Python environments", () => {
 	});
 });
 
-describe("Python navigation", () => {
+describeWithTools("Python navigation", ["python3", "pyright-langserver"], () => {
 	it("#given a type from a venv dependency #when hovering a non-ASCII name #then Pyright resolves it in that venv", async () => {
 		// given
 		const w = workspace();
@@ -221,43 +222,102 @@ describe("Python navigation", () => {
 	});
 });
 
-const CONDA_ROOT = join(homedir(), "miniforge3");
-const condaEnv = (name: string): string => join(CONDA_ROOT, "envs", name);
-const hasConda = ["vllm-dev", "cuda-dev", "sgl-dev"].every((name) => existsSync(condaEnv(name)));
+/** conda, mamba, or micromamba: whichever the machine (or CI) provides. */
+function condaExecutable(): string | undefined {
+	for (const variable of ["CONDA_EXE", "MAMBA_EXE"]) {
+		const path = process.env[variable];
+		if (path !== undefined && existsSync(path)) return path;
+	}
+	return findFirstExecutable(["conda", "mamba", "micromamba"], process.env);
+}
 
-describe.runIf(hasConda || process.env["LSP_INTEGRATION_REQUIRE_CONDA"] === "1")("Conda environments", () => {
-	it("#given two Conda environments with different packages #when switching #then import resolution follows the active one", async () => {
-		// given
-		const w = workspace();
-		w.snapshot("env-conda-vllm", activatedConda(condaEnv("vllm-dev")));
-		w.snapshot("env-conda-cuda", activatedConda(condaEnv("cuda-dev")));
-		// A regular (non-editable) install: vllm-dev has transformers, cuda-dev does not.
-		w.write("main.py", "import transformers\n");
+const condaPython = (prefix: string): string =>
+	process.platform === "win32" ? join(prefix, "python.exe") : join(prefix, "bin", "python");
 
-		// when
-		const inVllm = await diagnose(w, { filePath: "main.py", environmentId: "env-conda-vllm", severity: "warning" });
-		const inCuda = await diagnose(w, { filePath: "main.py", environmentId: "env-conda-cuda", severity: "warning" });
+/** Creates a real Conda environment with only Python; it downloads packages unless they are cached. */
+async function createCondaEnv(conda: string, prefix: string): Promise<string> {
+	await execFileAsync(
+		conda,
+		[
+			"create",
+			"--yes",
+			"--quiet",
+			"--prefix",
+			prefix,
+			"--override-channels",
+			"--channel",
+			"conda-forge",
+			"python=3.12",
+		],
+		{ maxBuffer: 16 * 1024 * 1024 },
+	);
+	return prefix;
+}
 
-		// then
-		expect(codes(inVllm)).not.toContain("pyright:reportMissingImports");
-		expect(codes(inCuda)).toContain("pyright:reportMissingImports");
-	});
+describeWithTools(
+	"Conda environments",
+	["python3", "pyright-langserver"],
+	() => {
+		let root = "";
+		let withModule = "";
+		let withoutModule = "";
 
-	it("#given a venv activated inside a Conda environment #when resolving #then the venv wins over CONDA_PREFIX", async () => {
-		// given
-		const w = workspace();
-		const venv = createVenv(join(w.root, ".venv"));
-		w.snapshot("env-nested-01", activatedVenv(venv, activatedConda(condaEnv("sgl-dev"))));
-		w.write("main.py", "x = 1\n");
+		beforeAll(async () => {
+			const conda = condaExecutable();
+			if (conda === undefined) throw new Error("conda disappeared after the suite was selected");
+			root = realpathSync(mkdtempSync(join(tmpdir(), "lsp-it-conda-")));
+			// One after the other: concurrent creates race on conda's shared package cache.
+			withModule = await createCondaEnv(conda, join(root, "with-module"));
+			withoutModule = await createCondaEnv(conda, join(root, "without-module"));
+			// Only one environment gets the module, so import resolution shows which environment Pyright used.
+			installModuleWith(condaPython(withModule), "lspprobe_conda", "VALUE: int = 1\n");
+		});
 
-		// when
-		const status = await w.call("status", { filePath: "main.py", environmentId: "env-nested-01" });
+		afterAll(() => {
+			if (root !== "") rmSync(root, { recursive: true, force: true });
+		});
 
-		// then
-		const toolchain = (status.data["file"] as { toolchain: { status: string; facts: Record<string, string> } })
-			.toolchain;
-		expect(toolchain.status).toBe("resolved");
-		expect(toolchain.facts["prefix"]).toBe(venv);
-		expect(toolchain.facts["condaPrefix"]).toBe(condaEnv("sgl-dev"));
-	});
-});
+		it("#given two Conda environments with different packages #when switching #then import resolution follows the active one", async () => {
+			// given
+			const w = workspace();
+			w.snapshot("env-conda-with", activatedConda(withModule));
+			w.snapshot("env-conda-without", activatedConda(withoutModule));
+			w.write("main.py", "import lspprobe_conda\n");
+
+			// when
+			const inWith = await diagnose(w, {
+				filePath: "main.py",
+				environmentId: "env-conda-with",
+				severity: "warning",
+			});
+			const inWithout = await diagnose(w, {
+				filePath: "main.py",
+				environmentId: "env-conda-without",
+				severity: "warning",
+			});
+
+			// then
+			expect(codes(inWith)).not.toContain("pyright:reportMissingImports");
+			expect(codes(inWithout)).toContain("pyright:reportMissingImports");
+		});
+
+		it("#given a venv activated inside a Conda environment #when resolving #then the venv wins over CONDA_PREFIX", async () => {
+			// given
+			const w = workspace();
+			const venv = createVenv(join(w.root, ".venv"));
+			w.snapshot("env-nested-01", activatedVenv(venv, activatedConda(withoutModule)));
+			w.write("main.py", "x = 1\n");
+
+			// when
+			const status = await w.call("status", { filePath: "main.py", environmentId: "env-nested-01" });
+
+			// then
+			const toolchain = (status.data["file"] as { toolchain: { status: string; facts: Record<string, string> } })
+				.toolchain;
+			expect(toolchain.status).toBe("resolved");
+			expect(toolchain.facts["prefix"]).toBe(venv);
+			expect(toolchain.facts["condaPrefix"]).toBe(withoutModule);
+		});
+	},
+	[{ name: "conda, mamba, or micromamba", met: condaExecutable() !== undefined }],
+);

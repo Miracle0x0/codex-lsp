@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { afterEach, beforeAll, describe, expect, it } from "vitest";
-
+import { afterEach, expect, it } from "vitest";
+import { describeWithTools } from "../support/tools.js";
 import {
 	batchOf,
 	callItemsOf,
@@ -11,7 +11,6 @@ import {
 	linkTypeScript,
 	locationsOf,
 	positionOf,
-	requireTool,
 	type Workspace,
 } from "./helpers.js";
 
@@ -33,11 +32,7 @@ afterEach(async () => {
 	for (const created of workspaces.splice(0)) await created.close();
 });
 
-beforeAll(() => {
-	requireTool("typescript-language-server");
-});
-
-describe("TypeScript", () => {
+describeWithTools("TypeScript", ["typescript-language-server"], () => {
 	it("#given a cross-file symbol #when renaming #then the caller is updated and no stale 'not exported' error remains", async () => {
 		// given
 		const w = workspace();
