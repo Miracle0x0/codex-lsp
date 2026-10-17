@@ -10,7 +10,14 @@ import {
 } from "../../core/index.js";
 
 import { type PatchOperation, parsePatch, patchApplied, patchFileChanges } from "./apply-patch.js";
-import { type BaselineStore, type BatchDiagnostic, baselineOf, contentHash, diffDiagnostics } from "./baseline.js";
+import {
+	type BaselineStore,
+	type BatchDiagnostic,
+	contentHash,
+	diffDiagnostics,
+	type FileResult,
+	projectBatch,
+} from "./baseline.js";
 
 export interface PreEditEvent {
 	readonly sessionId: string;
@@ -148,8 +155,16 @@ export class EditFeedback {
 		if (edited.length === 0 && related.length === 0) return emptyResult(notes, changes);
 
 		const batch = await this.check(event, [...edited, ...related], "edited file(s)", signal);
-		const reports = edited.flatMap((path) => this.compare(event.sessionId, batch, path, created.has(path), true));
-		reports.push(...related.flatMap((path) => this.compare(event.sessionId, batch, path, false, false)));
+		const results = projectBatch(batch);
+		const compare = (path: string, isEdited: boolean): FileReport[] => {
+			const result = results.get(path);
+			if (result === undefined) return [];
+			return this.compare(event.sessionId, path, result, isEdited && created.has(path), isEdited);
+		};
+		const reports = [
+			...edited.flatMap((path) => compare(path, true)),
+			...related.flatMap((path) => compare(path, false)),
+		];
 		const text = this.feedback(event, batch, reports, edited.length, related.length, notes);
 		return {
 			hookOutput:
@@ -201,21 +216,10 @@ export class EditFeedback {
 		);
 	}
 
-	/** Compares one file with its baseline and makes the current result the new baseline. */
-	private compare(
-		session: string,
-		batch: DiagnosticBatch,
-		path: string,
-		created: boolean,
-		edited: boolean,
-	): FileReport[] {
-		const now = baselineOf(batch, path);
-		if (now.providers.length === 0) return [];
-		if (batch.files.some((file) => file.path === path && file.freshness === "unconfirmed")) {
-			return [{ path, status: "unconfirmed", added: [], resolved: [], existing: now.diagnostics }];
-		}
-		const before = this.baselines.get(session, path);
-		this.baselines.set(session, path, now);
+	/** Compares one file's result with its baseline and makes the result the new baseline when it can. */
+	private compare(session: string, path: string, now: FileResult, created: boolean, edited: boolean): FileReport[] {
+		const { accepted, previous: before } = this.baselines.accept(session, path, now);
+		if (!accepted) return [{ path, status: "unconfirmed", added: [], resolved: [], existing: now.diagnostics }];
 		if (created) return [{ path, status: "created", added: now.diagnostics, resolved: [], existing: [] }];
 		if (before === undefined || before.environmentKey !== now.environmentKey) {
 			if (!edited) return [];

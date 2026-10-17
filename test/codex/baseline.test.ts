@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
-import { type BatchDiagnostic, diffDiagnostics } from "../../src/codex/hook/baseline.js";
+import { BaselineStore, type BatchDiagnostic, diffDiagnostics, projectBatch } from "../../src/codex/hook/baseline.js";
+import type { DiagnosticBatch } from "../../src/core/index.js";
 
 function diagnostic(message: string, line: number, providerId = "pyright"): BatchDiagnostic {
 	return {
@@ -46,5 +47,77 @@ describe("diagnostic diff", () => {
 
 		// then
 		expect(added.map((item) => item.providerId)).toEqual(["ruff"]);
+	});
+});
+
+function batchOf(files: DiagnosticBatch["files"], diagnostics: DiagnosticBatch["diagnostics"]): DiagnosticBatch {
+	return {
+		target: "test",
+		scope: "files",
+		workspaceRoot: "/w",
+		environment: { environmentId: "env", generation: 2, source: "active-shell" },
+		complete: true,
+		incompleteReasons: [],
+		providers: [],
+		files,
+		coverage: {
+			scannedFiles: 0,
+			checkedFiles: 0,
+			unsupportedFiles: 0,
+			unsupportedExtensions: [],
+			excludedDirectories: 0,
+		},
+		minimumSeverity: "warning",
+		counts: { total: diagnostics.length, error: diagnostics.length, warning: 0, information: 0, hint: 0 },
+		diagnostics,
+		shown: diagnostics.length,
+		truncated: false,
+	};
+}
+
+describe("batch projection and baseline replacement", () => {
+	it("#given two providers and one unconfirmed result #when projecting #then each file has its providers, problems, and confirmation", () => {
+		// given
+		const batch = batchOf(
+			[
+				{ path: "/w/a.py", serverId: "pyright", documentVersion: 1, freshness: "confirmed" },
+				{ path: "/w/a.py", serverId: "ruff", documentVersion: 1, freshness: "unconfirmed" },
+				{ path: "/w/b.py", serverId: "pyright", documentVersion: 1, freshness: "observed" },
+			],
+			[diagnostic("a", 1), { ...diagnostic("b", 2), path: "/w/b.py" }],
+		);
+
+		// when
+		const files = projectBatch(batch);
+
+		// then
+		expect(files.get("/w/a.py")).toMatchObject({
+			environmentKey: "active-shell:env#2",
+			providers: ["pyright", "ruff"],
+			confirmed: false,
+		});
+		expect(files.get("/w/a.py")?.diagnostics.map((item) => item.message)).toEqual(["a"]);
+		expect(files.get("/w/b.py")).toMatchObject({ providers: ["pyright"], confirmed: true });
+	});
+
+	it("#given a baseline #when an unconfirmed result is recorded #then the old baseline stays", () => {
+		// given
+		const store = new BaselineStore();
+		store.record(
+			"s",
+			batchOf(
+				[{ path: "/w/a.py", serverId: "pyright", documentVersion: 1, freshness: "confirmed" }],
+				[diagnostic("old", 1)],
+			),
+		);
+
+		// when
+		store.record(
+			"s",
+			batchOf([{ path: "/w/a.py", serverId: "pyright", documentVersion: 2, freshness: "unconfirmed" }], []),
+		);
+
+		// then
+		expect(store.get("s", "/w/a.py")?.diagnostics.map((item) => item.message)).toEqual(["old"]);
 	});
 });

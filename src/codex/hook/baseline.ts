@@ -56,14 +56,37 @@ export function diffDiagnostics(
 	return { added: remaining(after, before), resolved: remaining(before, after) };
 }
 
-/** What a batch says about one file, in baseline form. */
-export function baselineOf(batch: DiagnosticBatch, path: string): FileBaseline {
-	return {
-		environmentKey: environmentKey(batch),
-		contentHash: contentHash(path),
-		providers: [...new Set(batch.files.filter((file) => file.path === path).map((file) => file.serverId))],
-		diagnostics: batch.diagnostics.filter((diagnostic) => diagnostic.path === path),
-	};
+/** What one batch says about one file, in baseline form. */
+export interface FileResult extends FileBaseline {
+	/** False when a provider could not confirm its result for the file's current content. */
+	readonly confirmed: boolean;
+}
+
+/**
+ * Every file a batch checked, in one pass over its files and diagnostics. Content hashes are read when
+ * the projection is made, right after the check, so each describes the text the diagnostics came from.
+ */
+export function projectBatch(batch: DiagnosticBatch): ReadonlyMap<string, FileResult> {
+	const key = environmentKey(batch);
+	const drafts = new Map<string, { providers: Set<string>; diagnostics: BatchDiagnostic[]; confirmed: boolean }>();
+	for (const file of batch.files) {
+		const draft = drafts.get(file.path) ?? { providers: new Set<string>(), diagnostics: [], confirmed: true };
+		draft.providers.add(file.serverId);
+		if (file.freshness === "unconfirmed") draft.confirmed = false;
+		drafts.set(file.path, draft);
+	}
+	for (const diagnostic of batch.diagnostics) drafts.get(diagnostic.path)?.diagnostics.push(diagnostic);
+	const files = new Map<string, FileResult>();
+	for (const [path, draft] of drafts) {
+		files.set(path, {
+			environmentKey: key,
+			contentHash: contentHash(path),
+			providers: [...draft.providers],
+			diagnostics: draft.diagnostics,
+			confirmed: draft.confirmed,
+		});
+	}
+	return files;
 }
 
 /** Per-session diagnostic baselines, bounded in sessions and files (least recently used are dropped). */
@@ -94,12 +117,25 @@ export class BaselineStore {
 		if (baseline !== undefined) this.set(session, to, baseline);
 	}
 
+	/**
+	 * Makes a file's result its new baseline and returns the baseline it replaced. An unconfirmed result
+	 * cannot tell what changed, so it never replaces one: the old baseline stays and `accepted` is false.
+	 */
+	accept(
+		session: string,
+		path: string,
+		result: FileResult,
+	): { readonly accepted: boolean; readonly previous: FileBaseline | undefined } {
+		const previous = this.get(session, path);
+		if (!result.confirmed) return { accepted: false, previous };
+		const { confirmed: _confirmed, ...baseline } = result;
+		this.set(session, path, baseline);
+		return { accepted: true, previous };
+	}
+
 	/** Records every file a batch checked as the new baseline for the session. */
 	record(session: string, batch: DiagnosticBatch): void {
-		for (const path of new Set(batch.files.map((file) => file.path))) {
-			if (batch.files.some((file) => file.path === path && file.freshness === "unconfirmed")) continue;
-			this.set(session, path, baselineOf(batch, path));
-		}
+		for (const [path, result] of projectBatch(batch)) this.accept(session, path, result);
 	}
 
 	private files(session: string): Map<string, FileBaseline> {
