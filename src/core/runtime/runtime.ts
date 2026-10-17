@@ -6,7 +6,7 @@ import type { ServerCapabilities } from "vscode-languageserver-protocol";
 import { ConfigService } from "../config/loader.js";
 import { DiagnosticService } from "../diagnostics/service.js";
 import { PositionMapper } from "../documents/positions.js";
-import { DocumentStore, type FileChange, type SyncedDocument } from "../documents/store.js";
+import { DocumentStore, type FileChange } from "../documents/store.js";
 import { WorkspaceEditCoordinator } from "../edits/coordinator.js";
 import { EnvironmentService } from "../environment/service.js";
 import type { LspClient, ServerTarget } from "../lsp/client.js";
@@ -36,7 +36,6 @@ export interface FileInput extends WorkspaceInput {
 export interface SemanticSession {
 	readonly client: LspClient;
 	readonly file: FileTarget;
-	readonly synced: SyncedDocument;
 	readonly positions: PositionMapper;
 }
 
@@ -126,9 +125,9 @@ export class LspRuntime {
 						`${target.server.id} does not support ${options.method} for ${file.language.id} files.`,
 					);
 				}
-				const synced = await this.documents.sync(client, file.path, file.languageId);
+				await this.documents.sync(client, file.path, file.languageId);
 				const positions = new PositionMapper((path) => client.documents.get(pathToFileURL(path).href)?.text);
-				return operation({ client, file, synced, positions });
+				return operation({ client, file, positions });
 			},
 			{ signal: options.signal, readOnly: options.readOnly },
 		);

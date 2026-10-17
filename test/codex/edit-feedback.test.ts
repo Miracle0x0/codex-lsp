@@ -5,7 +5,8 @@ import { expect, it, vi } from "vitest";
 import { BaselineStore } from "../../src/codex/hook/baseline.js";
 import { EditFeedback } from "../../src/codex/hook/edit-feedback.js";
 import { postEditDiagnosticsTool, preEditSnapshotTool } from "../../src/codex/hook/tools.js";
-import { createLspRuntime, FileChangeJournal } from "../../src/core/index.js";
+import { createLspRuntime } from "../../src/core/index.js";
+import { FileChangeJournal } from "../../src/core/workspace/journal.js";
 
 it("#given an old problem #when the provider returns an unconfirmed empty result #then no resolution is claimed and the baseline survives", async () => {
 	const root = mkdtempSync(join(tmpdir(), "lsp-hook-freshness-"));

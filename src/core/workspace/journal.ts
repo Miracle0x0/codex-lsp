@@ -27,8 +27,6 @@ export interface JournalMark {
 interface JournalEvent {
 	readonly seq: number;
 	readonly path: string;
-	/** fs.watch reports creation, deletion, and renames as "rename" and content writes as "change". */
-	readonly kind: "rename" | "change";
 }
 
 function statOf(path: string): ReturnType<typeof lstatSync> | undefined {
@@ -104,9 +102,9 @@ export class FileChangeJournal {
 		this.files.clear();
 	}
 
-	private record(path: string, kind: JournalEvent["kind"]): void {
+	private record(path: string): void {
 		this.seq += 1;
-		this.events.push({ seq: this.seq, path, kind });
+		this.events.push({ seq: this.seq, path });
 		if (this.events.length > this.maxEvents) {
 			const dropped = this.events.splice(0, this.events.length - this.maxEvents);
 			this.droppedThrough = dropped.at(-1)?.seq ?? this.droppedThrough;
@@ -147,7 +145,7 @@ export class FileChangeJournal {
 					if (!this.isExcluded(path)) pending.push(path);
 				} else if (stat.isFile()) {
 					this.files.add(path);
-					if (recordFiles) this.record(path, "rename");
+					if (recordFiles) this.record(path);
 				}
 			}
 		}
@@ -155,7 +153,7 @@ export class FileChangeJournal {
 
 	private watch(directory: string): boolean {
 		try {
-			const watcher = watch(directory, { persistent: false }, (kind, name) => this.onEvent(directory, kind, name));
+			const watcher = watch(directory, { persistent: false }, (_kind, name) => this.onEvent(directory, name));
 			watcher.on("error", (error) => {
 				this.standingProblems.add(`watcher for ${directory} failed: ${error.message}`);
 				watcher.close();
@@ -171,7 +169,7 @@ export class FileChangeJournal {
 		}
 	}
 
-	private onEvent(directory: string, kind: string, name: string | Buffer | null): void {
+	private onEvent(directory: string, name: string | Buffer | null): void {
 		if (this.closed) return;
 		if (name === null) {
 			this.problem(`a change in ${directory} was reported without a file name`);
@@ -189,11 +187,11 @@ export class FileChangeJournal {
 			for (const known of this.files) {
 				if (known === path || known.startsWith(`${path}${sep}`)) {
 					this.files.delete(known);
-					if (known !== path) this.record(known, "rename");
+					if (known !== path) this.record(known);
 				}
 			}
 		} else if (stat.isFile()) this.files.add(path);
-		this.record(path, kind === "change" ? "change" : "rename");
+		this.record(path);
 	}
 
 	private unwatchTree(path: string): void {

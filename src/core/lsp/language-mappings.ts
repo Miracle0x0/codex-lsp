@@ -27,13 +27,6 @@ export const SYMBOL_KIND_MAP: Record<number, string> = {
 	26: "TypeParameter",
 };
 
-export const SEVERITY_MAP: Record<number, string> = {
-	1: "error",
-	2: "warning",
-	3: "information",
-	4: "hint",
-};
-
 export const EXT_TO_LANG: Record<string, string> = {
 	".abap": "abap",
 	".bat": "bat",

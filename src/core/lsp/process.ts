@@ -13,7 +13,6 @@ export interface SpawnedProcess {
 	exitCode: number | null;
 	exited: Promise<number>;
 	kill(signal?: NodeJS.Signals): void;
-	killed: boolean;
 }
 
 export interface SpawnOptions {
@@ -75,9 +74,6 @@ function wrap(proc: ChildProcess): SpawnedProcess {
 		},
 		get exitCode() {
 			return proc.exitCode;
-		},
-		get killed() {
-			return proc.killed;
 		},
 		exited: exitedPromise,
 		kill(signal?: NodeJS.Signals) {

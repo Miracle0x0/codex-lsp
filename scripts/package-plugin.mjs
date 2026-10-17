@@ -33,7 +33,8 @@ const requiredFiles = [
 	"docs/README.md",
 ];
 const forbiddenPackages = ["@code-yeongyu/lsp-tools-mcp", "typescript", "typescript6", "vitest", "@biomejs/biome", "pyright", "typescript-language-server"];
-const deployMetadata = ["pnpm-lock.yaml", "pnpm-workspace.yaml"];
+/** Install inputs that are not part of the installed plugin. */
+const installOnlyFiles = ["pnpm-lock.yaml"];
 
 function parseArgs(argv) {
 	const options = { out: join(repoRoot, "artifacts", "codex-lsp-plugin"), verify: false };
@@ -92,7 +93,7 @@ function walk(dir, visit) {
 }
 
 function stripLinkSurfaces(out) {
-	for (const file of deployMetadata) rmSync(join(out, file), { force: true });
+	for (const file of installOnlyFiles) rmSync(join(out, file), { force: true });
 	walk(out, (fullPath, entry, stat) => {
 		if (entry === ".bin" && stat.isDirectory()) {
 			rmSync(fullPath, { recursive: true, force: true });

@@ -22,9 +22,7 @@ export const LSP_SERVER_INSTRUCTIONS = [
 ].join(" ");
 
 export interface LspServerFactoryOptions {
-	readonly name?: string;
 	readonly version?: string;
-	readonly instructions?: string;
 	/** Tools to register; defaults to the standard LSP tools. */
 	readonly tools?: readonly RegisteredLspTool[];
 	readonly resolveContext?: ContextResolver;
@@ -38,23 +36,22 @@ function packageVersion(): string {
 }
 
 function callContext(ctx: ServerContext, resolveContext: ContextResolver | undefined): ToolCallContext {
-	const meta = ctx.mcpReq._meta;
-	const token = meta?.progressToken;
+	return { ...(resolveContext?.(ctx.mcpReq._meta) ?? {}), signal: ctx.mcpReq.signal };
+}
+
+type ProgressReporter = (message: string) => Promise<void>;
+
+/** Sends MCP progress notifications when the request asked for them with a progress token. */
+function progressReporter(ctx: ServerContext): ProgressReporter | undefined {
+	const token = ctx.mcpReq._meta?.progressToken;
+	if (token === undefined) return undefined;
 	let progress = 0;
-	return {
-		...(resolveContext?.(meta) ?? {}),
-		signal: ctx.mcpReq.signal,
-		...(token === undefined
-			? {}
-			: {
-					reportProgress: async (message: string) => {
-						ctx.mcpReq.signal.throwIfAborted();
-						await ctx.mcpReq.notify({
-							method: "notifications/progress",
-							params: { progressToken: token, progress: ++progress, message },
-						});
-					},
-				}),
+	return async (message) => {
+		ctx.mcpReq.signal.throwIfAborted();
+		await ctx.mcpReq.notify({
+			method: "notifications/progress",
+			params: { progressToken: token, progress: ++progress, message },
+		});
 	};
 }
 
@@ -63,11 +60,12 @@ async function runTool(
 	tool: RegisteredLspTool,
 	args: unknown,
 	context: ToolCallContext,
+	reportProgress: ProgressReporter | undefined,
 ): Promise<CallToolResult> {
 	try {
-		await context.reportProgress?.(`Starting ${tool.name}`);
+		await reportProgress?.(`Starting ${tool.name}`);
 		const result = await tool.run(runtime, args, context);
-		await context.reportProgress?.(`Completed ${tool.name}`);
+		await reportProgress?.(`Completed ${tool.name}`);
 		return {
 			content: [{ type: "text", text: result.summary }],
 			structuredContent: result.data,
@@ -94,7 +92,7 @@ export function registerLspTools(
 				outputSchema: tool.outputSchema,
 				annotations: tool.annotations,
 			},
-			async (args, ctx) => runTool(runtime, tool, args, callContext(ctx, resolveContext)),
+			async (args, ctx) => runTool(runtime, tool, args, callContext(ctx, resolveContext), progressReporter(ctx)),
 		);
 	}
 }
@@ -103,10 +101,7 @@ export function registerLspTools(
 export function createLspServerFactory(runtime: LspRuntime, options: LspServerFactoryOptions = {}): () => McpServer {
 	const version = options.version ?? packageVersion();
 	return () => {
-		const server = new McpServer(
-			{ name: options.name ?? LSP_SERVER_NAME, version },
-			{ instructions: options.instructions ?? LSP_SERVER_INSTRUCTIONS },
-		);
+		const server = new McpServer({ name: LSP_SERVER_NAME, version }, { instructions: LSP_SERVER_INSTRUCTIONS });
 		registerLspTools(server, runtime, options.tools ?? LSP_TOOLS, options.resolveContext);
 		return server;
 	};

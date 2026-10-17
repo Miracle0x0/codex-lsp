@@ -5,7 +5,6 @@ import { ToolFailure } from "../tools/failures.js";
 /** Per-call context the host supplies alongside tool arguments. */
 export interface ToolCallContext {
 	readonly signal: AbortSignal;
-	readonly reportProgress?: (message: string) => Promise<void>;
 	/** Workspace root reported by the host for this call (absolute). */
 	readonly workspaceRoot?: string;
 	readonly environmentId?: string;
