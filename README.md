@@ -1,6 +1,6 @@
 # codex-lsp
 
-[![ci](https://github.com/code-yeongyu/codex-lsp/actions/workflows/ci.yml/badge.svg)](https://github.com/code-yeongyu/codex-lsp/actions/workflows/ci.yml) [![license: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![ci](https://github.com/Miracle0x0/codex-lsp/actions/workflows/ci.yml/badge.svg)](https://github.com/Miracle0x0/codex-lsp/actions/workflows/ci.yml) [![license: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 Codex plugin that ports the standalone LSP runtime from [`pi-lsp-client`](https://github.com/code-yeongyu/pi-lsp-client). It gives Codex post-edit diagnostics plus explicit MCP tools for language-aware code work.
 
@@ -35,7 +35,7 @@ Details, including updates and installing a copied plugin on another machine, ar
 
 ## Architecture
 
-This repository is one pnpm package with two internal layers:
+The LSP runtime is included directly in `src/core/`; the Git submodule has been removed. This repository is one pnpm package with two internal layers:
 
 - `src/core/` owns the MCP server, LSP processes, documents, diagnostics, workspace edits, configuration, and environment snapshots.
 - `src/codex/` owns Codex metadata, edit hooks, shell capture and integration, the launcher, and configuration output.
