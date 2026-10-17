@@ -108,7 +108,7 @@ jobs:
       - name: Install Python tools
         if: matrix.suite == 'python'
         run: |
-          npm install -g pyright@1.1.414
+          pnpm add -g pyright@1.1.414
           pipx install ruff==0.17.0
           pipx install uv==0.13.1
       # Conda itself only; the tests create their own temporary environments from conda-forge.
@@ -122,7 +122,7 @@ jobs:
           run-init: "false"
       - name: Install TypeScript 6 language server
         if: matrix.suite == 'typescript'
-        run: npm install -g typescript-language-server@6.0.0
+        run: pnpm add -g typescript-language-server@6.0.0
       - name: Install gopls
         if: matrix.suite == 'go'
         run: |
@@ -138,8 +138,12 @@ jobs:
       - name: Record tool versions
         run: |
           case "${{ matrix.suite }}" in
-            python) python3 --version; pyright --version; ruff --version; uv --version; conda --version ;;
-            typescript) typescript-language-server --version; node node_modules/typescript/bin/tsc --version ;;
+            python)
+              command -v python3 pyright pyright-langserver ruff uv conda
+              python3 --version; pyright --version; ruff --version; uv --version; conda --version ;;
+            typescript)
+              command -v typescript-language-server
+              typescript-language-server --version; node node_modules/typescript/bin/tsc --version ;;
             go) go version; gopls version ;;
             rust) rustup --version; rustc --version; cargo --version; rust-analyzer --version ;;
             cpp) clangd --version ;;
@@ -161,7 +165,12 @@ jobs:
           cache: true
           install: false
       - run: pnpm install --frozen-lockfile
-      - run: npm install -g @openai/codex@0.163.0 pyright@1.1.414
+      - name: Install Codex and Pyright
+        run: |
+          pnpm add -g @openai/codex@0.163.0 pyright@1.1.414
+          command -v codex pyright pyright-langserver
+          codex --version
+          pyright --version
       - run: pnpm run test:package
       - name: Write isolated authentication file
         env:
