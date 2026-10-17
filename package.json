@@ -1,17 +1,17 @@
 {
-	"name": "@code-yeongyu/codex-lsp",
+	"name": "codex-lsp",
 	"version": "0.2.0",
 	"description": "Codex plugin that exposes Language Server Protocol tools and post-edit diagnostics.",
 	"type": "module",
 	"packageManager": "pnpm@12.11.2",
 	"license": "MIT",
-	"homepage": "https://github.com/code-yeongyu/codex-lsp",
+	"homepage": "https://github.com/Miracle0x0/codex-lsp",
 	"repository": {
 		"type": "git",
-		"url": "git+https://github.com/code-yeongyu/codex-lsp.git"
+		"url": "git+https://github.com/Miracle0x0/codex-lsp.git"
 	},
 	"bugs": {
-		"url": "https://github.com/code-yeongyu/codex-lsp/issues"
+		"url": "https://github.com/Miracle0x0/codex-lsp/issues"
 	},
 	"keywords": [
 		"codex",

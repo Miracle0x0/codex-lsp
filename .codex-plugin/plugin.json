@@ -3,12 +3,11 @@
 	"version": "0.2.0",
 	"description": "Expose Language Server Protocol diagnostics and navigation tools to Codex.",
 	"author": {
-		"name": "Yeongyu Kim",
-		"email": "yeongyu@users.noreply.github.com",
-		"url": "https://github.com/code-yeongyu"
+		"name": "March",
+		"url": "https://github.com/Miracle0x0"
 	},
-	"homepage": "https://github.com/code-yeongyu/codex-lsp",
-	"repository": "https://github.com/code-yeongyu/codex-lsp",
+	"homepage": "https://github.com/Miracle0x0/codex-lsp",
+	"repository": "https://github.com/Miracle0x0/codex-lsp",
 	"license": "MIT",
 	"keywords": ["codex", "codex-plugin", "lsp", "language-server-protocol", "mcp", "diagnostics"],
 	"skills": "./skills/",
@@ -18,12 +17,12 @@
 		"displayName": "Codex LSP",
 		"shortDescription": "Adds LSP diagnostics and navigation tools",
 		"longDescription": "Codex LSP runs language servers from your project environment, reports diagnostics after edits, and exposes MCP tools for diagnostics, definitions, references, symbols, hover, implementations, call hierarchy, rename preparation, rename application, and server status.",
-		"developerName": "Yeongyu Kim",
+		"developerName": "March",
 		"category": "Developer Tools",
 		"capabilities": ["Hooks", "MCP Tools", "Code Intelligence"],
-		"websiteURL": "https://github.com/code-yeongyu/codex-lsp",
-		"privacyPolicyURL": "https://github.com/code-yeongyu/codex-lsp#privacy",
-		"termsOfServiceURL": "https://github.com/code-yeongyu/codex-lsp#license",
+		"websiteURL": "https://github.com/Miracle0x0/codex-lsp",
+		"privacyPolicyURL": "https://github.com/Miracle0x0/codex-lsp#privacy",
+		"termsOfServiceURL": "https://github.com/Miracle0x0/codex-lsp#license",
 		"defaultPrompt": [
 			"Run LSP diagnostics on the files I just edited.",
 			"Use LSP to find references before changing this symbol.",
