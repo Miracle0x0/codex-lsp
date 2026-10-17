@@ -35,8 +35,7 @@
 		"NOTICE",
 		"README.md",
 		"CHANGELOG.md",
-		"docs",
-		"DESIGN-zh.md"
+		"docs"
 	],
 	"scripts": {
 		"build": "node scripts/build.mjs",

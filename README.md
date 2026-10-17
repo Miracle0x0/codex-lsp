@@ -42,7 +42,7 @@ The LSP runtime is included directly in `src/core/`; the Git submodule has been 
 - `src/codex/` owns Codex metadata, edit hooks, shell capture and integration, the launcher, and configuration output.
 - `src/cli.ts` composes both layers into one long-running MCP process; `test/core/`, `test/codex/`, and `test/integration/` cover them at their respective boundaries.
 
-Codex calls the hook endpoints through native `mcp_tool` hooks, so checks reuse the language servers serving explicit tools. The architecture and implementation are described in [DESIGN-zh.md](DESIGN-zh.md).
+Codex calls the hook endpoints through native `mcp_tool` hooks, so checks reuse the language servers serving explicit tools.
 
 ## Local Development
 

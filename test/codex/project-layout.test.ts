@@ -27,6 +27,7 @@ describe("single-package project layout", () => {
 		]);
 		expect(Object.values(pkg.dependencies).some((version) => version.startsWith("workspace:"))).toBe(false);
 		expect(pkg.bin).toEqual({ "codex-lsp": "./dist/cli.js" });
-		expect(pkg.files).toEqual(expect.arrayContaining(["dist", "docs", "DESIGN-zh.md"]));
+		expect(pkg.files).toEqual(expect.arrayContaining(["dist", "docs"]));
+		expect(pkg.files).not.toContain("DESIGN-zh.md");
 	});
 });
