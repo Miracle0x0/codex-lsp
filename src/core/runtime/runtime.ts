@@ -3,7 +3,9 @@ import { pathToFileURL } from "node:url";
 
 import type { ServerCapabilities } from "vscode-languageserver-protocol";
 
-import { ConfigService } from "../config/loader.js";
+import { ConfigService, type ConfigSources } from "../config/loader.js";
+import type { DiagnosticBatch } from "../diagnostics/batch.js";
+import { type DiagnosticsRequest, runDiagnosticsRequest } from "../diagnostics/request.js";
 import { DiagnosticService } from "../diagnostics/service.js";
 import { PositionMapper } from "../documents/positions.js";
 import { DocumentStore, type FileChange } from "../documents/store.js";
@@ -18,6 +20,8 @@ import { resolveToolPath, resolveWorkspaceRoot, type ToolCallContext, type Works
 import { type FileTarget, TargetResolver } from "./router.js";
 
 export interface LspRuntimeOptions {
+	/** Where configuration files are looked up; decided by the process that composes the runtime. */
+	readonly config: ConfigSources;
 	/** Workspace used when neither the tool input nor the host context names one. */
 	readonly defaultWorkspaceRoot?: string;
 	/** Directory with captured shell environment snapshots. */
@@ -42,7 +46,7 @@ export interface SemanticSession {
 /** Long-lived state shared by every MCP server instance in one process. */
 export class LspRuntime {
 	readonly manager: LspManager;
-	readonly configs = new ConfigService();
+	readonly configs: ConfigService;
 	readonly environments: EnvironmentService;
 	readonly resolver: TargetResolver;
 	readonly documents = new DocumentStore();
@@ -52,7 +56,8 @@ export class LspRuntime {
 	readonly defaultEnvironmentId: string | undefined;
 	private readonly journals = new Map<string, FileChangeJournal>();
 
-	constructor(options: LspRuntimeOptions = {}) {
+	constructor(options: LspRuntimeOptions) {
+		this.configs = new ConfigService(options.config);
 		this.manager = options.manager ?? new LspManager();
 		this.defaultWorkspaceRoot = options.defaultWorkspaceRoot;
 		this.defaultEnvironmentId = options.defaultEnvironmentId;
@@ -133,6 +138,11 @@ export class LspRuntime {
 		);
 	}
 
+	/** Checks a file set with every configured diagnostic provider; see `DiagnosticsRequest`. */
+	diagnose(request: DiagnosticsRequest, signal: AbortSignal): Promise<DiagnosticBatch> {
+		return runDiagnosticsRequest(this.resolver, this.diagnostics, request, signal);
+	}
+
 	/** Tells every running client about file changes made outside the runtime. */
 	async notifyFileChanges(changes: readonly FileChange[]): Promise<void> {
 		await this.documents.applyFileChanges(this.manager.activeClients(), changes);
@@ -175,6 +185,6 @@ export class LspRuntime {
 	}
 }
 
-export function createLspRuntime(options: LspRuntimeOptions = {}): LspRuntime {
+export function createLspRuntime(options: LspRuntimeOptions): LspRuntime {
 	return new LspRuntime(options);
 }

@@ -2,18 +2,12 @@ import { statSync } from "node:fs";
 
 import * as z from "zod";
 
-import {
-	buildBatch,
-	checkFiles,
-	type DiagnosticBatch,
-	formatBatch,
-	providerFailed,
-	type Severity,
-} from "../diagnostics/batch.js";
+import type { EffectiveConfig } from "../config/loader.js";
+import { type DiagnosticBatch, formatBatch, providerFailed } from "../diagnostics/batch.js";
 import { DiagnosticBatchSchema } from "../diagnostics/batch-schema.js";
+import type { FileSelection } from "../diagnostics/request.js";
 import { DEFAULT_MAX_DIAGNOSTICS, DIAGNOSTICS_TIMEOUT_MS } from "../lsp/constants.js";
 import type { ToolCallContext } from "../runtime/context.js";
-import type { FileTarget } from "../runtime/router.js";
 import type { LspRuntime } from "../runtime/runtime.js";
 import { walkFiles } from "../workspace/files.js";
 import { defineLspTool } from "./definition.js";
@@ -43,7 +37,7 @@ const DiagnosticsInputSchema = z.object({
 
 export type DiagnosticsInput = z.output<typeof DiagnosticsInputSchema>;
 
-/** Shared by the diagnostics tool and host adapters that check edited files. */
+/** Checks one file, or every file a directory scan finds; explicit checks report down to hints by default. */
 export async function runDiagnostics(
 	runtime: LspRuntime,
 	input: DiagnosticsInput,
@@ -57,115 +51,41 @@ export async function runDiagnostics(
 	} catch {
 		throw new ToolFailure("invalid_path", `Path does not exist: ${path}`);
 	}
-	const environmentId = runtime.environmentId(input, context);
-	const config = runtime.resolver.config(workspaceRoot);
-	const environment = runtime.resolver.environment(config, environmentId);
-	const minimumSeverity = input.severity ?? config.diagnostics.minimumSeverity ?? "hint";
-	const checkOptions = {
-		servers: input.servers,
-		timeoutMs: input.timeoutMs,
-		signal: context.signal,
-		closeOpened: isDirectory,
-	};
-
-	if (!isDirectory) {
-		const file = runtime.resolver.file(path, workspaceRoot, environmentId);
-		return buildBatch({
+	return runtime.diagnose(
+		{
 			target: path,
-			scope: "file",
+			scope: isDirectory ? "directory" : "file",
 			workspaceRoot,
-			environment,
-			results: await checkFiles(runtime.diagnostics, [file], checkOptions),
-			coverage: { scannedFiles: 1, unsupportedFiles: 0, unsupportedExtensions: [], excludedDirectories: 0 },
-			minimumSeverity,
+			environmentId: runtime.environmentId(input, context),
+			select: isDirectory
+				? (config) => scanDirectory(path, config, input, context.signal)
+				: () => ({ paths: [path] }),
+			severity: input.severity,
+			defaultSeverity: "hint",
+			servers: input.servers,
+			timeoutMs: input.timeoutMs,
+			closeOpened: isDirectory,
 			limit: input.limit,
-		});
-	}
-
-	const walk = walkFiles(path, {
-		exclude: config.diagnostics.exclude,
-		maxFiles: input.maxFiles,
-		signal: context.signal,
-	});
-	const files: FileTarget[] = [];
-	const unsupported = new Set<string>();
-	for (const filePath of walk.files) {
-		const file = runtime.resolver.fileTarget(filePath, workspaceRoot, config, environment);
-		if (file !== undefined) files.push(file);
-		else unsupported.add(extensionOf(filePath));
-	}
-	const extraIncompleteReasons = [
-		...(walk.limitReached ? [`maxFiles=${input.maxFiles} reached; remaining files were not scanned`] : []),
-		...walk.unreadableDirectories.map((directory) => `cannot read directory ${directory}`),
-	];
-	return buildBatch({
-		target: path,
-		scope: "directory",
-		workspaceRoot,
-		environment,
-		results: await checkFiles(runtime.diagnostics, files, checkOptions),
-		coverage: {
-			scannedFiles: walk.files.length,
-			unsupportedFiles: walk.files.length - files.length,
-			unsupportedExtensions: [...unsupported].sort(),
-			excludedDirectories: walk.excludedDirectories,
 		},
-		minimumSeverity,
-		limit: input.limit,
-		extraIncompleteReasons,
-	});
+		context.signal,
+	);
 }
 
-export interface FileSetInput {
-	/** Absolute paths; files of unconfigured languages are counted as unsupported. */
-	readonly paths: readonly string[];
-	readonly workspaceRoot: string | undefined;
-	readonly environmentId: string | null;
-	/** Label for the batch, for example "2 edited file(s)". */
-	readonly target: string;
-	readonly severity: Severity;
-	readonly timeoutMs?: number;
-}
-
-/** Checks an explicit set of files (edited or renamed ones) in one workspace and environment. */
-export async function diagnoseFiles(
-	runtime: LspRuntime,
-	input: FileSetInput,
+function scanDirectory(
+	directory: string,
+	config: EffectiveConfig,
+	input: DiagnosticsInput,
 	signal: AbortSignal,
-): Promise<DiagnosticBatch> {
-	const config = runtime.resolver.config(input.workspaceRoot);
-	const environment = runtime.resolver.environment(config, input.environmentId ?? undefined);
-	const files: FileTarget[] = [];
-	const unsupported = new Set<string>();
-	for (const path of input.paths) {
-		const file = runtime.resolver.fileTarget(path, input.workspaceRoot, config, environment);
-		if (file !== undefined) files.push(file);
-		else unsupported.add(extensionOf(path));
-	}
-	return buildBatch({
-		target: input.target,
-		scope: "files",
-		workspaceRoot: input.workspaceRoot,
-		environment,
-		results: await checkFiles(runtime.diagnostics, files, {
-			timeoutMs: input.timeoutMs ?? DIAGNOSTICS_TIMEOUT_MS,
-			signal,
-			closeOpened: false,
-		}),
-		coverage: {
-			scannedFiles: input.paths.length,
-			unsupportedFiles: input.paths.length - files.length,
-			unsupportedExtensions: [...unsupported].sort(),
-			excludedDirectories: 0,
-		},
-		minimumSeverity: input.severity,
-	});
-}
-
-function extensionOf(path: string): string {
-	const name = path.slice(Math.max(path.lastIndexOf("/"), path.lastIndexOf("\\")) + 1);
-	const dot = name.lastIndexOf(".");
-	return dot > 0 ? name.slice(dot) : "(none)";
+): FileSelection {
+	const walk = walkFiles(directory, { exclude: config.diagnostics.exclude, maxFiles: input.maxFiles, signal });
+	return {
+		paths: walk.files,
+		excludedDirectories: walk.excludedDirectories,
+		incompleteReasons: [
+			...(walk.limitReached ? [`maxFiles=${input.maxFiles} reached; remaining files were not scanned`] : []),
+			...walk.unreadableDirectories.map((unreadable) => `cannot read directory ${unreadable}`),
+		],
+	};
 }
 
 export const diagnosticsTool = defineLspTool({

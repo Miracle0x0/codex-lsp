@@ -2,6 +2,7 @@ import { basename } from "node:path";
 
 import {
 	type CaptureResult,
+	configSourcesOf,
 	ENVIRONMENT_ID_PATTERN,
 	loadEffectiveConfig,
 	newEnvironmentId,
@@ -34,8 +35,8 @@ export function shellEnvironmentId(env: NodeJS.ProcessEnv): string | undefined {
 }
 
 /** Invalid configuration must fail capture, including from a prompt hook. */
-function extraVariables(cwd: string): readonly string[] {
-	return loadEffectiveConfig(cwd).environment.extraVariables;
+function extraVariables(cwd: string, env: NodeJS.ProcessEnv): readonly string[] {
+	return loadEffectiveConfig(cwd, configSourcesOf(env)).environment.extraVariables;
 }
 
 /**
@@ -59,6 +60,6 @@ export function captureEnvironment(options: CaptureOptions): CaptureResult {
 		cwd: options.cwd,
 		shell: { name: shellName, pid: options.shellPid },
 		env: options.env,
-		extraVariables: extraVariables(options.cwd),
+		extraVariables: extraVariables(options.cwd, options.env),
 	});
 }

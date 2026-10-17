@@ -1,3 +1,5 @@
+import { tmpdir } from "node:os";
+
 import { createMcpHandler } from "@modelcontextprotocol/server";
 import { afterEach, describe, expect, it } from "vitest";
 
@@ -209,7 +211,7 @@ describe("lsp MCP server (2026-07-28)", () => {
 describe("lsp MCP server legacy posture", () => {
 	it("#given a 2025-era initialize #when sent to the handler #then it is rejected with the supported revision", async () => {
 		// given
-		const runtime = createLspRuntime();
+		const runtime = createLspRuntime({ config: { env: {}, homeDir: tmpdir() } });
 		const handler = createMcpHandler(createLspServerFactory(runtime, { version: "0.0.0-test" }), {
 			legacy: "reject",
 		});

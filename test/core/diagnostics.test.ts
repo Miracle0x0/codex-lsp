@@ -228,6 +228,33 @@ describe("multi-source diagnostics", () => {
 		expect(batch.counts).toMatchObject({ total: 1, error: 1, warning: 0 });
 		expect(batch.diagnostics).toHaveLength(1);
 	});
+
+	it("#given a hint-level problem #when checking without a severity or config #then the explicit check reports hints", async () => {
+		// given
+		const h = await harness({ markers: ["ERROR", "HINT"] });
+		h.writeFile("a.fake", "ERROR\nHINT\n");
+
+		// when
+		const { batch } = await diagnose(h, { filePath: "a.fake" });
+
+		// then
+		expect(batch.minimumSeverity).toBe("hint");
+		expect(batch.counts).toMatchObject({ total: 2, error: 1, hint: 1 });
+	});
+
+	it("#given a single file no language claims #when checking it #then the tool fails instead of reporting coverage", async () => {
+		// given
+		const h = await harness();
+		h.writeFile("notes.md", "# notes\n");
+
+		// when
+		const result = await h.client.callTool({ name: "diagnostics", arguments: { filePath: "notes.md" } });
+
+		// then
+		expect(result.isError).toBe(true);
+		expect(JSON.stringify(result.content)).toContain("[server_not_configured] No language is configured for '.md'");
+		expect(h.readLog()).toEqual([]);
+	});
 });
 
 describe("directory diagnostics", () => {

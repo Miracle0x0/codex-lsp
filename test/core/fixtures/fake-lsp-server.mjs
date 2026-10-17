@@ -2,7 +2,7 @@
 // Scriptable LSP server for tests. Behaviour comes from FAKE_LSP_BEHAVIOR (JSON) and
 // every received message is appended to FAKE_LSP_LOG (JSON lines) when set.
 //
-// Diagnostics: each line containing "ERROR" produces an error, "WARN" a warning.
+// Diagnostics: each line containing "ERROR" produces an error, "WARN" a warning, "HINT" a hint.
 // Behaviour keys:
 //   capabilities           merged into the advertised ServerCapabilities
 //   diagnosticMode         "push" (default) | "pull" | "none"
@@ -47,6 +47,7 @@ function diagnosticsFor(text) {
 		for (const [marker, severity] of [
 			["ERROR", 1],
 			["WARN", 2],
+			["HINT", 4],
 		].filter(([marker]) => (behavior.markers ?? ["ERROR", "WARN"]).includes(marker))) {
 			const character = content.indexOf(marker);
 			if (character === -1) continue;

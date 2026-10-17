@@ -24,6 +24,15 @@ export interface FileTarget {
 	readonly environment: EnvironmentContext;
 }
 
+/** The error for an explicit file whose extension no configured language claims. */
+export function unconfiguredLanguage(path: string, config: EffectiveConfig): ToolFailure {
+	const extension = extname(path);
+	return new ToolFailure(
+		"server_not_configured",
+		`No language is configured for '${extension || path}'. Add it under "languages" in ${config.files.project?.path ?? config.files.user.path}.`,
+	);
+}
+
 export function isInside(path: string, root: string): boolean {
 	const offset = relative(root, path);
 	return offset === "" || (!offset.startsWith("..") && !isAbsolute(offset));
@@ -97,13 +106,7 @@ export class TargetResolver {
 	file(path: string, workspaceRoot: string | undefined, environmentId: string | undefined): FileTarget {
 		const config = this.config(workspaceRoot);
 		const target = this.fileTarget(path, workspaceRoot, config, this.environment(config, environmentId));
-		if (target === undefined) {
-			const extension = extname(path);
-			throw new ToolFailure(
-				"server_not_configured",
-				`No language is configured for '${extension || path}'. Add it under "languages" in ${config.files.project?.path ?? config.files.user.path}.`,
-			);
-		}
+		if (target === undefined) throw unconfiguredLanguage(path, config);
 		return target;
 	}
 

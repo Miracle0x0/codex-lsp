@@ -4,7 +4,6 @@ import * as z from "zod";
 import { formatBatch } from "../diagnostics/batch.js";
 import { DiagnosticBatchSchema } from "../diagnostics/batch-schema.js";
 import { defineLspTool } from "./definition.js";
-import { diagnoseFiles } from "./diagnostics.js";
 import { ToolFailure } from "./failures.js";
 import { positionParams } from "./navigation.js";
 import { PositionInputShape, RangeSchema } from "./schemas.js";
@@ -136,14 +135,16 @@ export const renameTool = defineLspTool({
 		const diagnostics =
 			changedPaths.length === 0
 				? null
-				: await diagnoseFiles(
-						runtime,
+				: await runtime.diagnose(
 						{
-							paths: changedPaths,
-							workspaceRoot: file.workspaceRoot,
-							environmentId: file.environment.environmentId,
 							target: `${changedPaths.length} renamed file(s)`,
+							scope: "files",
+							workspaceRoot: file.workspaceRoot,
+							environmentId: file.environment.environmentId ?? undefined,
+							select: () => ({ paths: changedPaths }),
 							severity: "warning",
+							defaultSeverity: "warning",
+							closeOpened: false,
 						},
 						context.signal,
 					);

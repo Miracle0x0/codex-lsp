@@ -269,7 +269,7 @@ Node 适配器返回的是事实与 fingerprint，没有像 Python 一样在返�
 
 ### 6.1 配置合并
 
-[ConfigService](src/core/config/loader.ts) 按内置、用户、项目三层加载配置，使用文件修改时间及大小判断是否重新读取。配置采用 `schemaVersion: 1`，未知字段、重复扩展名归属及未知服务器引用会报错。
+[ConfigService](src/core/config/loader.ts) 按内置、用户、项目三层加载配置，使用文件修改时间及大小判断是否重新读取。配置文件位置由组合运行时的入口通过 `ConfigSources`（覆盖变量 `LSP_TOOLS_MCP_USER_CONFIG`/`LSP_TOOLS_MCP_PROJECT_CONFIG` 与 home 目录）一次性给定：CLI 传入自身进程环境，环境采集传入被采集 shell 的环境；核心层不再读取全局 `process.env` 或 `homedir()` 决定配置来源。配置采用 `schemaVersion: 1`，未知字段、重复扩展名归属及未知服务器引用会报错。
 
 同名 `servers` 条目整体替换，`languages` 条目按字段覆盖已有定义；数组随字段替换。工具链推导的 settings 与用户服务器 settings 递归合并，后者优先。替换内置 TypeScript 服务器时必须保留需要的初始化选项，当前内置 `tsserver.useSyntaxServer = "never"` 用于避免项目加载期的单文件语义结果。[内置服务器](src/core/config/builtins.ts)
 
@@ -355,6 +355,8 @@ key: stableHash({
 ## 8. 多来源诊断与结果语义
 
 ### 8.1 诊断收集
+
+所有诊断入口都通过 [LspRuntime.diagnose()](src/core/diagnostics/request.ts) 发出一次请求：显式工具选择单个文件或遍历目录，Hook 和 rename 给出已改动文件；请求只解析一次配置和环境，生成目标、统计覆盖并构造完整批次。各入口的差异作为请求参数显式表达：单个文件的语言未配置是工具错误，文件集合中的同类文件计入覆盖；显式工具未指定且未配置时报告到 hint，Hook 与 rename 报告到 warning；目录扫描检查后关闭自己打开的文档，编辑检查保持打开；只有显式工具设置展示上限。
 
 [checkFiles()](src/core/diagnostics/batch.ts) 先按语言分组，再并行运行每种语言配置的诊断来源。每个来源内部继续按 `ServerTarget.key` 分组，通过管理器获取客户端，每个客户端最多并发检查八个文档。
 
@@ -501,7 +503,7 @@ apply(edit: WorkspaceEdit, origin: LspClient): Promise<WorkspaceEditReport> {
 
 ### 11.1 诊断正确性与可见性
 
-删除了 `neverIdle` 永久状态。每次 pull 检查重新判断工作区是否空闲；等待超时则继续标为 unconfirmed，后续加载结束可以恢复正常结果。内部 `diagnoseFiles()` 不设输出条数限制，显式 `diagnostics` 工具的展示限制仍由参数控制，因此 Hook 和 rename 的基线不会受 1,000/200 条截断影响。
+删除了 `neverIdle` 永久状态。每次 pull 检查重新判断工作区是否空闲；等待超时则继续标为 unconfirmed，后续加载结束可以恢复正常结果。Hook 与 rename 发出的诊断请求不设输出条数限制，显式 `diagnostics` 工具的展示限制仍由参数控制，因此 Hook 和 rename 的基线不会受 1,000/200 条截断影响。
 
 [编辑反馈](src/codex/hook/edit-feedback.ts) 复查当前工作区全部已打开相关文件，移除了十文件上限。监听不完整、日志已关闭或缺少 PreToolUse 记录时，即使零个文件变化也返回 `additionalContext`；不再提前去重并丢弃告警。未确认结果不更新基线，不产生 resolved 结论。
 

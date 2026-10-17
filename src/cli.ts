@@ -14,6 +14,7 @@ import { EditFeedback } from "./codex/hook/edit-feedback.js";
 import { postEditDiagnosticsTool, preEditSnapshotTool, recordingRename } from "./codex/hook/tools.js";
 import { launch } from "./codex/launch.js";
 import {
+	configSourcesOf,
 	createLspRuntime,
 	ENVIRONMENT_ID_PATTERN,
 	LSP_TOOLS,
@@ -48,6 +49,7 @@ async function serveMcp(): Promise<void> {
 	// The plugin process starts in the plugin directory, so there is no default workspace root:
 	// each call's workspace comes from Codex turn metadata, the hook's cwd, or explicit tool arguments.
 	const runtime = createLspRuntime({
+		config: configSourcesOf(env),
 		stateDir: binding.stateDir,
 		...(binding.environmentId === undefined ? {} : { defaultEnvironmentId: binding.environmentId }),
 	});

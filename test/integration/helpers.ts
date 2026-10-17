@@ -4,7 +4,6 @@ import { tmpdir } from "node:os";
 import { delimiter, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { PROJECT_CONFIG_ENV, USER_CONFIG_ENV } from "../../src/core/config/loader.js";
 import { type DiagnosticBatch, DiagnosticBatchSchema } from "../../src/core/diagnostics/batch-schema.js";
 import { writeSnapshot } from "../../src/core/environment/snapshot.js";
 import { findExecutable } from "../../src/core/lsp/command.js";
@@ -40,14 +39,12 @@ export function createWorkspace(config?: unknown): Workspace {
 	const root = realpathSync(mkdtempSync(join(tmpdir(), "lsp-it-")));
 	const stateDir = join(root, ".state");
 	mkdirSync(stateDir);
-	const saved = { project: process.env[PROJECT_CONFIG_ENV], user: process.env[USER_CONFIG_ENV] };
-	delete process.env[PROJECT_CONFIG_ENV];
-	process.env[USER_CONFIG_ENV] = join(root, ".no-user-config.json");
 	if (config !== undefined) {
 		mkdirSync(join(root, ".codex"), { recursive: true });
 		writeFileSync(join(root, ".codex", "lsp-client.json"), JSON.stringify(config));
 	}
-	const runtime = createLspRuntime({ defaultWorkspaceRoot: root, stateDir });
+	// The workspace is also the home directory, so only configuration the test writes is loaded.
+	const runtime = createLspRuntime({ config: { env: {}, homeDir: root }, defaultWorkspaceRoot: root, stateDir });
 	const context: ToolCallContext = { signal: new AbortController().signal };
 	return {
 		root,
@@ -71,10 +68,6 @@ export function createWorkspace(config?: unknown): Workspace {
 		async close() {
 			await runtime.dispose();
 			rmSync(root, { recursive: true, force: true });
-			if (saved.project === undefined) delete process.env[PROJECT_CONFIG_ENV];
-			else process.env[PROJECT_CONFIG_ENV] = saved.project;
-			if (saved.user === undefined) delete process.env[USER_CONFIG_ENV];
-			else process.env[USER_CONFIG_ENV] = saved.user;
 		},
 	};
 }

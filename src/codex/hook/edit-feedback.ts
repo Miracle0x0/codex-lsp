@@ -2,13 +2,11 @@ import { statSync } from "node:fs";
 
 import {
 	type DiagnosticBatch,
-	diagnoseFiles,
 	type FileChange,
 	type FileChangeJournal,
 	formatBatchDiagnostic,
 	type JournalMark,
 	type LspRuntime,
-	type Severity,
 } from "../../core/index.js";
 
 import { type PatchOperation, parsePatch, patchApplied, patchFileChanges } from "./apply-patch.js";
@@ -189,16 +187,15 @@ export class EditFeedback {
 		label: string,
 		signal: AbortSignal,
 	): Promise<DiagnosticBatch> {
-		const config = this.runtime.resolver.config(event.cwd);
-		const severity: Severity = config.diagnostics.minimumSeverity ?? "warning";
-		return diagnoseFiles(
-			this.runtime,
+		return this.runtime.diagnose(
 			{
-				paths,
-				workspaceRoot: event.cwd,
-				environmentId: this.runtime.environmentId({}, { signal }) ?? null,
 				target: `${paths.length} ${label}`,
-				severity,
+				scope: "files",
+				workspaceRoot: event.cwd,
+				environmentId: this.runtime.environmentId({}, { signal }),
+				select: () => ({ paths }),
+				defaultSeverity: "warning",
+				closeOpened: false,
 			},
 			signal,
 		);

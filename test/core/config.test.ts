@@ -3,11 +3,23 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { ConfigError, loadEffectiveConfig, PROJECT_CONFIG_ENV, USER_CONFIG_ENV } from "../../src/core/config/loader.js";
+import {
+	ConfigError,
+	ConfigService,
+	type ConfigSources,
+	loadEffectiveConfig as loadConfig,
+	PROJECT_CONFIG_ENV,
+	USER_CONFIG_ENV,
+} from "../../src/core/config/loader.js";
 
 let workspace: string;
 let userConfig: string;
-const saved = { project: process.env[PROJECT_CONFIG_ENV], user: process.env[USER_CONFIG_ENV] };
+
+/** Loads with a private user file and home, whatever the caller's environment says. */
+function loadEffectiveConfig(workspaceRoot: string) {
+	const sources: ConfigSources = { env: { [USER_CONFIG_ENV]: userConfig }, homeDir: workspace };
+	return loadConfig(workspaceRoot, sources);
+}
 
 function writeProject(config: unknown): void {
 	mkdirSync(join(workspace, ".codex"), { recursive: true });
@@ -21,16 +33,10 @@ function writeUser(config: unknown): void {
 beforeEach(() => {
 	workspace = mkdtempSync(join(tmpdir(), "lsp-config-"));
 	userConfig = join(workspace, "user-config.json");
-	delete process.env[PROJECT_CONFIG_ENV];
-	process.env[USER_CONFIG_ENV] = userConfig;
 });
 
 afterEach(() => {
 	rmSync(workspace, { recursive: true, force: true });
-	if (saved.project === undefined) delete process.env[PROJECT_CONFIG_ENV];
-	else process.env[PROJECT_CONFIG_ENV] = saved.project;
-	if (saved.user === undefined) delete process.env[USER_CONFIG_ENV];
-	else process.env[USER_CONFIG_ENV] = saved.user;
 });
 
 describe("config v1", () => {
@@ -156,5 +162,38 @@ describe("config v1", () => {
 			source: "project",
 		});
 		expect(config.environment.extraVariables).toEqual(["MY_VAR"]);
+	});
+
+	it("#given override variables in the process environment #when a service loads from explicit sources #then only those sources are read", () => {
+		// given
+		const broken = join(workspace, "broken.json");
+		writeFileSync(broken, "{ nope");
+		const saved = { project: process.env[PROJECT_CONFIG_ENV], user: process.env[USER_CONFIG_ENV] };
+		process.env[PROJECT_CONFIG_ENV] = broken;
+		process.env[USER_CONFIG_ENV] = broken;
+		const home = join(workspace, "home");
+		mkdirSync(join(home, ".codex"), { recursive: true });
+		writeFileSync(
+			join(home, ".codex", "lsp-client.json"),
+			JSON.stringify({ schemaVersion: 1, diagnostics: { minimumSeverity: "error" } }),
+		);
+
+		try {
+			// when
+			const config = new ConfigService({ env: {}, homeDir: home }).load(workspace);
+
+			// then
+			expect(config.files.user).toEqual({ path: join(home, ".codex", "lsp-client.json"), loaded: true });
+			expect(config.files.project).toEqual({ path: join(workspace, ".codex", "lsp-client.json"), loaded: false });
+			expect(config.diagnostics.minimumSeverity).toBe("error");
+		} finally {
+			for (const [name, value] of [
+				[PROJECT_CONFIG_ENV, saved.project],
+				[USER_CONFIG_ENV, saved.user],
+			] as const) {
+				if (value === undefined) delete process.env[name];
+				else process.env[name] = value;
+			}
+		}
 	});
 });

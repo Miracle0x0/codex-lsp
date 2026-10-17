@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
 import { createMcpHandler } from "@modelcontextprotocol/server";
 
+import { PROJECT_CONFIG_ENV } from "../../../src/core/config/loader.js";
 import { createLspServerFactory, type LspServerFactoryOptions } from "../../../src/core/mcp/server.js";
 import { createLspRuntime, type LspRuntime } from "../../../src/core/runtime/runtime.js";
 
@@ -26,7 +27,7 @@ export interface FakeLspBehavior {
 	readonly loadingMs?: number;
 	readonly neverIdle?: boolean;
 	readonly backgroundCheck?: { readonly delayMs: number; readonly durationMs: number };
-	readonly markers?: readonly ("ERROR" | "WARN")[];
+	readonly markers?: readonly ("ERROR" | "WARN" | "HINT")[];
 	readonly renameEdit?: unknown;
 	readonly hoverResult?: unknown;
 }
@@ -46,9 +47,6 @@ export interface McpHarness {
 	readLog(): FakeLspLogEntry[];
 	close(): Promise<void>;
 }
-
-const CONFIG_ENV = "LSP_TOOLS_MCP_PROJECT_CONFIG";
-const USER_CONFIG_ENV = "LSP_TOOLS_MCP_USER_CONFIG";
 
 export interface HarnessOptions extends Omit<LspServerFactoryOptions, "version"> {
 	/** null leaves the runtime without a default workspace root. */
@@ -86,14 +84,11 @@ export async function createMcpHarness(
 			},
 		}),
 	);
-	const previousProject = process.env[CONFIG_ENV];
-	const previousUser = process.env[USER_CONFIG_ENV];
-	process.env[CONFIG_ENV] = configPath;
-	process.env[USER_CONFIG_ENV] = join(workspace, "missing-user-config.json");
 
 	const defaultWorkspaceRoot =
 		options.defaultWorkspaceRoot === null ? undefined : (options.defaultWorkspaceRoot ?? workspace);
 	const runtime = createLspRuntime({
+		config: { env: { [PROJECT_CONFIG_ENV]: configPath }, homeDir: workspace },
 		...(defaultWorkspaceRoot === undefined ? {} : { defaultWorkspaceRoot }),
 		...(options.stateDir === undefined ? {} : { stateDir: options.stateDir }),
 		...(options.defaultEnvironmentId === undefined ? {} : { defaultEnvironmentId: options.defaultEnvironmentId }),
@@ -135,16 +130,9 @@ export async function createMcpHarness(
 			await client.close();
 			await handler.close();
 			await runtime.dispose();
-			restoreEnv(CONFIG_ENV, previousProject);
-			restoreEnv(USER_CONFIG_ENV, previousUser);
 			rmSync(workspace, { recursive: true, force: true });
 		},
 	};
-}
-
-function restoreEnv(name: string, value: string | undefined): void {
-	if (value === undefined) delete process.env[name];
-	else process.env[name] = value;
 }
 
 export async function waitFor(predicate: () => boolean, timeoutMs = 3000): Promise<void> {

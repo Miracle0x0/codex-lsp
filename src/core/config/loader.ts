@@ -110,14 +110,34 @@ function stableStringify(value: unknown): string {
 	return JSON.stringify(value) ?? "null";
 }
 
-export function configPaths(workspaceRoot: string | undefined): { user: string; project: string | undefined } {
-	const projectOverride = process.env[PROJECT_CONFIG_ENV];
-	const userOverride = process.env[USER_CONFIG_ENV];
+/**
+ * Where configuration files are looked up. The process that composes a runtime decides this once;
+ * nothing below it reads the global environment or home directory for configuration.
+ */
+export interface ConfigSources {
+	/** Variables that may override the file locations (`LSP_TOOLS_MCP_USER_CONFIG`, `LSP_TOOLS_MCP_PROJECT_CONFIG`). */
+	readonly env: Readonly<Record<string, string | undefined>>;
+	/** Holds the default user file and resolves relative user paths. */
+	readonly homeDir: string;
+}
+
+export function configSourcesOf(env: Readonly<Record<string, string | undefined>>): ConfigSources {
+	return { env, homeDir: homedir() };
+}
+
+export interface ConfigPaths {
+	readonly user: string;
+	readonly project: string | undefined;
+}
+
+export function configPaths(workspaceRoot: string | undefined, sources: ConfigSources): ConfigPaths {
+	const projectOverride = sources.env[PROJECT_CONFIG_ENV];
+	const userOverride = sources.env[USER_CONFIG_ENV];
 	const user = userOverride
 		? isAbsolute(userOverride)
 			? userOverride
-			: join(homedir(), userOverride)
-		: join(homedir(), DEFAULT_CONFIG_PATH);
+			: join(sources.homeDir, userOverride)
+		: join(sources.homeDir, DEFAULT_CONFIG_PATH);
 	if (projectOverride && isAbsolute(projectOverride)) return { user, project: projectOverride };
 	if (workspaceRoot === undefined) return { user, project: undefined };
 	return { user, project: join(workspaceRoot, projectOverride || DEFAULT_CONFIG_PATH) };
@@ -183,11 +203,14 @@ interface LanguageDraft {
 	config: LanguageConfig;
 }
 
-export function loadEffectiveConfig(workspaceRoot: string | undefined): EffectiveConfig {
+export function loadEffectiveConfig(workspaceRoot: string | undefined, sources: ConfigSources): EffectiveConfig {
+	return loadConfigFiles(workspaceRoot, configPaths(workspaceRoot, sources), sources.homeDir);
+}
+
+function loadConfigFiles(workspaceRoot: string | undefined, paths: ConfigPaths, homeDir: string): EffectiveConfig {
 	const issues: ConfigIssue[] = [];
-	const paths = configPaths(workspaceRoot);
-	const userLayer = readLayer("user", paths.user, homedir(), issues);
-	const projectLayer = readLayer("project", paths.project, workspaceRoot ?? homedir(), issues);
+	const userLayer = readLayer("user", paths.user, homeDir, issues);
+	const projectLayer = readLayer("project", paths.project, workspaceRoot ?? homeDir, issues);
 	if (issues.length > 0) throw new ConfigError(issues);
 	const layers = [userLayer, projectLayer].filter((layer): layer is Layer => layer !== undefined);
 
@@ -323,13 +346,15 @@ function fileStamp(path: string | undefined): string {
 export class ConfigService {
 	private readonly cache = new Map<string, CachedConfig>();
 
+	constructor(private readonly sources: ConfigSources) {}
+
 	load(workspaceRoot: string | undefined): EffectiveConfig {
-		const paths = configPaths(workspaceRoot);
+		const paths = configPaths(workspaceRoot, this.sources);
 		const stamp = [paths.user, fileStamp(paths.user), paths.project ?? "-", fileStamp(paths.project)].join("|");
 		const key = workspaceRoot ?? "";
 		const cached = this.cache.get(key);
 		if (cached?.stamp === stamp) return cached.config;
-		const config = loadEffectiveConfig(workspaceRoot);
+		const config = loadConfigFiles(workspaceRoot, paths, this.sources.homeDir);
 		this.cache.set(key, { stamp, config });
 		return config;
 	}
