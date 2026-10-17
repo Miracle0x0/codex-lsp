@@ -3,6 +3,7 @@ import * as z from "zod";
 
 import { formatBatch } from "../diagnostics/batch.js";
 import { DiagnosticBatchSchema } from "../diagnostics/batch-schema.js";
+import { FILE_CHANGE_KINDS } from "../documents/store.js";
 import { defineLspTool } from "./definition.js";
 import { ToolFailure } from "./failures.js";
 import { positionParams } from "./navigation.js";
@@ -83,7 +84,7 @@ export const RenameOutputSchema = z.object({
 	operationId: z.string().describe("Identifies this write; later hooks reuse its report instead of re-checking."),
 	applied: z.boolean(),
 	editCount: z.number().int(),
-	changes: z.array(z.object({ path: z.string(), kind: z.enum(["created", "changed", "deleted"]) })),
+	changes: z.array(z.object({ path: z.string(), kind: z.enum(FILE_CHANGE_KINDS) })),
 	completed: z.array(z.string()),
 	failed: z.object({ operation: z.string(), error: z.string() }).optional(),
 	skipped: z.array(z.string()),

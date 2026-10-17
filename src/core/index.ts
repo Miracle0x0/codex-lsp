@@ -2,7 +2,7 @@
 export { configSourcesOf, loadEffectiveConfig } from "./config/loader.js";
 export { type DiagnosticBatch, formatBatchDiagnostic, type Severity } from "./diagnostics/batch.js";
 export { DiagnosticBatchSchema } from "./diagnostics/batch-schema.js";
-export type { FileChange } from "./documents/store.js";
+export { FILE_CHANGE_KINDS, type FileChange } from "./documents/store.js";
 export {
 	type CaptureResult,
 	defaultStateDir,

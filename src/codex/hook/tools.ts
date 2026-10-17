@@ -3,13 +3,14 @@ import * as z from "zod";
 import {
 	DiagnosticBatchSchema,
 	defineLspTool,
+	FILE_CHANGE_KINDS,
 	formatToolFailure,
 	type RegisteredLspTool,
 	toToolFailure,
 } from "../../core/index.js";
 
 import type { BaselineStore } from "./baseline.js";
-import type { EditFeedback, HookOutput } from "./edit-feedback.js";
+import { type EditFeedback, FILE_STATUSES, type HookOutput } from "./edit-feedback.js";
 
 const HOOK_ANNOTATIONS = { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false };
 
@@ -47,7 +48,7 @@ export function preEditSnapshotTool(feedback: EditFeedback): RegisteredLspTool {
 
 const FileReportSchema = z.object({
 	path: z.string(),
-	status: z.enum(["compared", "created", "first-check", "environment-changed", "unconfirmed"]),
+	status: z.enum(FILE_STATUSES),
 	added: z.number().int(),
 	resolved: z.number().int(),
 	existing: z.number().int(),
@@ -63,7 +64,7 @@ export function postEditDiagnosticsTool(feedback: EditFeedback): RegisteredLspTo
 		inputSchema: z.object({ ...HookEventShape, turnId: z.string().min(1).optional(), toolResponse: z.unknown() }),
 		outputSchema: z.object({
 			hookOutput: z.record(z.string(), z.unknown()),
-			changes: z.array(z.object({ path: z.string(), kind: z.enum(["created", "changed", "deleted"]) })),
+			changes: z.array(z.object({ path: z.string(), kind: z.enum(FILE_CHANGE_KINDS) })),
 			files: z.array(FileReportSchema),
 			diagnostics: DiagnosticBatchSchema.nullable(),
 			notes: z.array(z.string()),

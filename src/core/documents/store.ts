@@ -4,7 +4,8 @@ import { pathToFileURL } from "node:url";
 import type { LspClient, OpenDocument } from "../lsp/client.js";
 import { ToolFailure } from "../tools/failures.js";
 
-export type FileChangeKind = "created" | "changed" | "deleted";
+export const FILE_CHANGE_KINDS = ["created", "changed", "deleted"] as const;
+export type FileChangeKind = (typeof FILE_CHANGE_KINDS)[number];
 
 export interface FileChange {
 	readonly path: string;

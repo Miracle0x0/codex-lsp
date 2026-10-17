@@ -35,7 +35,8 @@ export type HookOutput =
 	| Record<string, never>
 	| { readonly hookSpecificOutput: { readonly hookEventName: "PostToolUse"; readonly additionalContext: string } };
 
-export type FileStatus = "compared" | "created" | "first-check" | "environment-changed" | "unconfirmed";
+export const FILE_STATUSES = ["compared", "created", "first-check", "environment-changed", "unconfirmed"] as const;
+export type FileStatus = (typeof FILE_STATUSES)[number];
 
 export interface FileReport {
 	readonly path: string;

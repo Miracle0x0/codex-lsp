@@ -1,5 +1,7 @@
 import * as z from "zod";
 
+import { SeveritySchema } from "../tools/schemas.js";
+
 export const TOOLCHAIN_KINDS = ["python", "node", "rust", "go", "java", "cpp"] as const;
 export type ToolchainKind = (typeof TOOLCHAIN_KINDS)[number];
 
@@ -49,7 +51,7 @@ export const DiagnosticsConfigSchema = z.strictObject({
 		.array(z.string().min(1))
 		.optional()
 		.describe("Directory names or workspace-relative path prefixes skipped by directory diagnostics."),
-	minimumSeverity: z.enum(["error", "warning", "information", "hint"]).optional(),
+	minimumSeverity: SeveritySchema.optional(),
 });
 
 export const ConfigFileSchema = z.strictObject({
