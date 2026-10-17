@@ -11,6 +11,7 @@
 //   source                 diagnostic source string (default "fake")
 //   requestDelays          { [method]: ms } delay before answering a request (cancellable)
 //   exitOnRequest          method name that makes the process exit with code 3
+//   exitOnNotification     notification method that makes the process exit with code 3 instead of handling it
 //   renameEdit             WorkspaceEdit returned by textDocument/rename; "$NEW" becomes newName, "$ROOT" the root URI
 //   publishOnce            publish at most once per document (a server that never refreshes)
 //   skipUnchanged          on didChange, do not republish diagnostics equal to the last ones (like tsserver)
@@ -187,6 +188,7 @@ function backgroundCheck(uri) {
 
 connection.onNotification((method, params) => {
 	log({ kind: "notification", method, params });
+	if (behavior.exitOnNotification === method) process.exit(3);
 	if (method === "initialized") {
 		if (behavior.loadingMs) {
 			loading = true;

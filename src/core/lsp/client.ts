@@ -121,6 +121,21 @@ const CLIENT_CAPABILITIES: ClientCapabilities = {
 	},
 };
 
+/** Resolves with `promise`, or with `fallback` once `ms` pass; the timer never outlives the race. */
+async function within<T, F>(promise: Promise<T>, ms: number, fallback: F): Promise<T | F> {
+	let timer: NodeJS.Timeout | undefined;
+	try {
+		return await Promise.race([
+			promise,
+			new Promise<F>((resolve) => {
+				timer = setTimeout(() => resolve(fallback), ms);
+			}),
+		]);
+	} finally {
+		clearTimeout(timer);
+	}
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -369,33 +384,18 @@ export class LspClient {
 	private waitForBusy(busy: boolean, timeoutMs: number, signal?: AbortSignal): Promise<boolean> {
 		const reached = (): boolean => this.busyWith().length > 0 === busy;
 		if (reached()) return Promise.resolve(true);
-		return new Promise((resolve, reject) => {
-			const cleanup = (): void => {
-				clearTimeout(timer);
-				this.busyListeners.delete(onChange);
-				this.exitListeners.delete(onExit);
-				signal?.removeEventListener("abort", onAbort);
-			};
-			const onChange = (): void => {
-				if (!reached()) return;
-				cleanup();
-				resolve(true);
-			};
-			const onExit = (): void => {
-				cleanup();
-				reject(this.exitedError());
-			};
-			const onAbort = (): void => {
-				cleanup();
-				reject(new LspRequestCancelledError("waiting for the server to finish loading"));
-			};
-			const timer = setTimeout(() => {
-				cleanup();
-				resolve(false);
-			}, timeoutMs);
-			this.busyListeners.add(onChange);
-			this.exitListeners.add(onExit);
-			signal?.addEventListener("abort", onAbort, { once: true });
+		return this.wait({
+			what: "waiting for the server to finish loading",
+			timeoutMs,
+			signal,
+			onTimeout: () => false,
+			subscribe: (settle) => {
+				const onChange = (): void => {
+					if (reached()) settle(true);
+				};
+				this.busyListeners.add(onChange);
+				return () => this.busyListeners.delete(onChange);
+			},
 		});
 	}
 
@@ -415,34 +415,82 @@ export class LspClient {
 	): Promise<PublishedDiagnostics | "pull" | null> {
 		const current = this.published.get(uri);
 		if (current !== undefined && accept(current)) return Promise.resolve(current);
-		return new Promise((resolve, reject) => {
-			const cleanup = (): void => {
+		return this.wait<PublishedDiagnostics | "pull" | null>({
+			what: "textDocument/publishDiagnostics",
+			timeoutMs,
+			signal,
+			onTimeout: () => null,
+			subscribe: (settle) => {
+				const onPublish = (published: PublishedDiagnostics): void => {
+					if (published.uri === uri && accept(published)) settle(published);
+				};
+				const onRegistration = (method: string): void => {
+					if (method === "textDocument/diagnostic") settle("pull");
+				};
+				this.publishListeners.add(onPublish);
+				this.registrationListeners.add(onRegistration);
+				return () => {
+					this.publishListeners.delete(onPublish);
+					this.registrationListeners.delete(onRegistration);
+				};
+			},
+		});
+	}
+
+	/**
+	 * One wait on this client. Whatever ends it (the awaited event, a failure, the timeout, cancellation, or
+	 * the server exiting) removes every listener and timer the wait registered. Cancellation and exit reject,
+	 * including when they happened before the wait began; the timeout's outcome comes from `onTimeout`.
+	 */
+	private wait<T>(spec: {
+		readonly what: string;
+		readonly timeoutMs: number;
+		readonly signal: AbortSignal | undefined;
+		readonly onTimeout: () => T;
+		/** Runs when the timeout or cancellation ends the wait, for example to cancel a request. */
+		readonly onInterrupt?: () => void;
+		readonly subscribe: (settle: (value: T) => void, fail: (error: unknown) => void) => () => void;
+	}): Promise<T> {
+		if (this.exited) return Promise.reject(this.exitedError());
+		if (spec.signal?.aborted) return Promise.reject(new LspRequestCancelledError(spec.what));
+		return new Promise<T>((resolve, reject) => {
+			let done = false;
+			let unsubscribe: () => void = () => undefined;
+			const finish = (outcome: () => void): void => {
+				if (done) return;
+				done = true;
 				clearTimeout(timer);
-				this.publishListeners.delete(onPublish);
-				this.registrationListeners.delete(onRegistration);
-				signal?.removeEventListener("abort", onAbort);
+				this.exitListeners.delete(onExit);
+				spec.signal?.removeEventListener("abort", onAbort);
+				unsubscribe();
+				outcome();
 			};
-			const onPublish = (published: PublishedDiagnostics): void => {
-				if (published.uri !== uri || !accept(published)) return;
-				cleanup();
-				resolve(published);
-			};
-			const onRegistration = (method: string): void => {
-				if (method !== "textDocument/diagnostic") return;
-				cleanup();
-				resolve("pull");
-			};
-			const onAbort = (): void => {
-				cleanup();
-				reject(new LspRequestCancelledError("textDocument/publishDiagnostics"));
-			};
-			const timer = setTimeout(() => {
-				cleanup();
-				resolve(null);
-			}, timeoutMs);
-			this.publishListeners.add(onPublish);
-			this.registrationListeners.add(onRegistration);
-			signal?.addEventListener("abort", onAbort, { once: true });
+			const onExit = (): void => finish(() => reject(this.exitedError()));
+			const onAbort = (): void =>
+				finish(() => {
+					spec.onInterrupt?.();
+					reject(new LspRequestCancelledError(spec.what));
+				});
+			const timer = setTimeout(
+				() =>
+					finish(() => {
+						spec.onInterrupt?.();
+						try {
+							resolve(spec.onTimeout());
+						} catch (error) {
+							reject(error);
+						}
+					}),
+				spec.timeoutMs,
+			);
+			this.exitListeners.add(onExit);
+			spec.signal?.addEventListener("abort", onAbort, { once: true });
+			const teardown = spec.subscribe(
+				(value) => finish(() => resolve(value)),
+				(error) => finish(() => reject(error)),
+			);
+			if (done) teardown();
+			else unsubscribe = teardown;
 		});
 	}
 
@@ -524,52 +572,41 @@ export class LspClient {
 	async request<T>(method: string, params: unknown, signal?: AbortSignal, timeoutMs = REQUEST_TIMEOUT_MS): Promise<T> {
 		const connection = this.connection;
 		if (!connection) throw new Error("LSP client not started");
-		if (this.exited) throw this.exitedError();
-		signal?.throwIfAborted();
-
 		const cancellation = new CancellationTokenSource();
-		let timer: NodeJS.Timeout | undefined;
-		let onAbort: (() => void) | undefined;
-		let onExit: (() => void) | undefined;
-		const interruption = new Promise<never>((_, reject) => {
-			onExit = () => reject(this.exitedError());
-			this.exitListeners.add(onExit);
-			timer = setTimeout(() => {
-				cancellation.cancel();
-				reject(new LspRequestTimeoutError(method, this.stderrTail(5)));
-			}, timeoutMs);
-			if (signal) {
-				onAbort = () => {
-					cancellation.cancel();
-					reject(new LspRequestCancelledError(method));
-				};
-				signal.addEventListener("abort", onAbort, { once: true });
-			}
-		});
 		try {
-			const pending =
-				params === undefined
-					? connection.sendRequest<T>(method, cancellation.token)
-					: connection.sendRequest<T>(method, params, cancellation.token);
-			return await Promise.race([pending, interruption]);
-		} catch (error) {
-			if (error instanceof LspRequestTimeoutError || error instanceof LspRequestCancelledError) throw error;
-			if (error instanceof ResponseError && error.code === REQUEST_CANCELLED)
-				throw new LspRequestCancelledError(method);
-			if (this.exited || (this.proc !== null && this.proc.exitCode !== null)) throw this.exitedError();
-			if (
-				error instanceof Error &&
-				/connection (?:is )?(?:closed|disposed)|pending response rejected/i.test(error.message)
-			) {
-				throw new LspConnectionClosedError(this.target.server.id, this.target.projectRoot, error.message);
-			}
-			throw error;
+			return await this.wait<T>({
+				what: method,
+				timeoutMs,
+				signal,
+				onTimeout: () => {
+					throw new LspRequestTimeoutError(method, this.stderrTail(5));
+				},
+				onInterrupt: () => cancellation.cancel(),
+				subscribe: (settle, fail) => {
+					const pending =
+						params === undefined
+							? connection.sendRequest<T>(method, cancellation.token)
+							: connection.sendRequest<T>(method, params, cancellation.token);
+					pending.then(settle, (error: unknown) => fail(this.requestError(method, error)));
+					return () => undefined;
+				},
+			});
 		} finally {
-			if (timer !== undefined) clearTimeout(timer);
-			if (signal && onAbort) signal.removeEventListener("abort", onAbort);
-			if (onExit) this.exitListeners.delete(onExit);
 			cancellation.dispose();
 		}
+	}
+
+	private requestError(method: string, error: unknown): unknown {
+		if (error instanceof ResponseError && error.code === REQUEST_CANCELLED)
+			return new LspRequestCancelledError(method);
+		if (this.exited || (this.proc !== null && this.proc.exitCode !== null)) return this.exitedError();
+		if (
+			error instanceof Error &&
+			/connection (?:is )?(?:closed|disposed)|pending response rejected/i.test(error.message)
+		) {
+			return new LspConnectionClosedError(this.target.server.id, this.target.projectRoot, error.message);
+		}
+		return error;
 	}
 
 	async notify(method: string, params: unknown): Promise<void> {
@@ -609,13 +646,14 @@ export class LspClient {
 		const proc = this.proc;
 		if (proc && proc.exitCode === null) {
 			proc.kill();
-			const exited = await Promise.race([
+			const exited = await within(
 				proc.exited.then(() => true),
-				new Promise<false>((resolve) => setTimeout(() => resolve(false), STOP_HARD_KILL_TIMEOUT_MS)),
-			]);
+				STOP_HARD_KILL_TIMEOUT_MS,
+				false,
+			);
 			if (!exited) {
 				proc.kill("SIGKILL");
-				await Promise.race([proc.exited, new Promise((resolve) => setTimeout(resolve, STOP_SIGKILL_GRACE_MS))]);
+				await within(proc.exited, STOP_SIGKILL_GRACE_MS, undefined);
 			}
 		}
 		this.markExited();

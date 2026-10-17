@@ -95,6 +95,24 @@ describe("multi-source diagnostics", () => {
 		expect(batch.incompleteReasons.join("\n")).toContain("broken");
 	});
 
+	it("#given a push server that exits instead of publishing #when checking #then the provider fails without waiting for the timeout", async () => {
+		// given
+		const h = await harness({}, { extraServers: { crashing: { exitOnNotification: "textDocument/didOpen" } } });
+		h.writeFile("a.fake", "ERROR\n");
+		const started = Date.now();
+
+		// when
+		const { batch, isError } = await diagnose(h, { filePath: "a.fake", timeoutMs: 20_000 });
+
+		// then
+		expect(Date.now() - started).toBeLessThan(10_000);
+		expect(isError).toBe(true);
+		const crashing = batch.providers.find((provider) => provider.serverId === "crashing");
+		expect(crashing?.status).toBe("failed");
+		expect(crashing?.message).toContain("[server_exited]");
+		expect(batch.diagnostics.map((diagnostic) => diagnostic.providerId)).toEqual(["fake"]);
+	});
+
 	it("#given a push server that never publishes #when checking #then the provider times out instead of reporting no diagnostics", async () => {
 		// given
 		const h = await harness({ diagnosticMode: "none" });

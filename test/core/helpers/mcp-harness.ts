@@ -20,6 +20,7 @@ export interface FakeLspBehavior {
 	readonly source?: string;
 	readonly requestDelays?: Record<string, number>;
 	readonly exitOnRequest?: string;
+	readonly exitOnNotification?: string;
 	readonly messageEnv?: string;
 	readonly publishOnce?: boolean;
 	readonly skipUnchanged?: boolean;

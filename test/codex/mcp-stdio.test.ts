@@ -83,13 +83,12 @@ describe("codex-lsp MCP entry", () => {
 
 			// when
 			process.kill(cliPid ?? 0, "SIGTERM");
-			await waitUntil(() => !alive(cliPid ?? 0), 10_000);
+			await waitUntil(() => !alive(cliPid ?? 0), 3_000);
 
 			// then
 			expect(session.fakeLog().map((entry) => entry.method)).toContain("shutdown");
 			expect(alive(serverPid ?? 0)).toBe(false);
 		},
-		15_000,
 	);
 });
 
