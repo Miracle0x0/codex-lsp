@@ -96,6 +96,21 @@ describe("config v1", () => {
 		});
 	});
 
+	it("#given a user definition named typescript #when loading #then only the built-in one selects its backend from the SDK", () => {
+		// given
+		const builtin = loadEffectiveConfig(workspace).servers.get("typescript");
+		writeUser({ schemaVersion: 1, servers: { typescript: { command: ["typescript-language-server", "--stdio"] } } });
+
+		// when
+		const replaced = loadEffectiveConfig(workspace).servers.get("typescript");
+
+		// then
+		expect(builtin).toMatchObject({ source: "builtin", sdkSelected: true });
+		expect(replaced).toMatchObject({ source: "user", sdkSelected: false });
+		expect(replaced?.hash).not.toBe(builtin?.hash);
+		expect(loadEffectiveConfig(workspace).servers.get("pyright")?.sdkSelected).toBe(false);
+	});
+
 	it("#given a route to an unknown server #when loading #then the error names the file and field", () => {
 		// given
 		writeProject({ schemaVersion: 1, languages: { python: { diagnosticServers: ["pyright", "nope"] } } });

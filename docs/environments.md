@@ -102,12 +102,12 @@ For each file, the runtime resolves the language's toolchain from the bound snap
 | Toolchain | Resolution |
 |-----------|------------|
 | Python | The `python` (or `python3`) first on the snapshot's `PATH`, which is what activation selects. The interpreter reports its own `sys.executable`, `prefix`, `base_prefix`, and version, and Pyright gets it as `python.pythonPath`. The result must agree with `VIRTUAL_ENV` (a venv inside Conda wins over `CONDA_PREFIX`) or `CONDA_PREFIX`; a disagreement or a missing venv directory fails the run instead of using another Python. A project `.venv` or `UV_PROJECT_ENVIRONMENT` that is not active is mentioned as a note. `environment.python.interpreter` pins an interpreter explicitly. |
-| Node / TypeScript | `node` from the snapshot's `PATH`, and the project's own `typescript` package; the plugin never lends its own TypeScript. |
+| Node / TypeScript | `node` from the snapshot's `PATH`, and the nearest `node_modules/typescript` from the project root up to the workspace root; the plugin never lends its own TypeScript. The SDK's version and layout choose the built-in TypeScript backend (see [TypeScript backend selection](configuration.md#typescript-backend-selection)); a broken SDK is reported, not skipped. |
 | Go | `go env` with `GOTOOLCHAIN=local`, so probing never downloads a toolchain. |
 | Rust | `rustc` and `cargo` with `RUSTUP_AUTO_INSTALL=0`. |
 | Java | `java -version` from the snapshot's `JAVA_HOME` or `PATH`. |
 | C/C++ | Versions of `$CC` and `$CXX`, and the compile database clangd will use (`compile_commands.json` or `compile_flags.txt` in the project or its `build`, `out`, `cmake-build-*` directories); a missing database is reported as a note. |
 
-Probing runs the tools without a shell, with a timeout, from an empty private directory. It never installs anything.
+Probing runs the tools without a shell, with a timeout, from an empty private directory. It never installs anything. Results are reused for up to 30 seconds per environment and project, except that a change to the files a result was read from (such as installing or replacing `node_modules/typescript`) is picked up on the next call.
 
 When an environment gets a new generation, clients started for the old one are replaced, so cached results from the previous environment are not reused.

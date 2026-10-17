@@ -71,7 +71,7 @@ Pass settings and initialization options:
 }
 ```
 
-Replacing a server replaces its whole definition, including built-in initialization options. If you redefine `typescript`, keep `"initializationOptions": { "tsserver": { "useSyntaxServer": "never" } }`; without it, first requests return single-file results while the project loads.
+Replacing a server replaces its whole definition, including built-in initialization options and, for `typescript`, the [backend selection](#typescript-backend-selection): a configured `typescript` runs exactly its own command. If you redefine it around typescript-language-server, keep `"initializationOptions": { "tsserver": { "useSyntaxServer": "never" } }`; without it, first requests return single-file results while the project loads.
 
 Report only errors after edits, and skip generated code in directory checks:
 
@@ -126,7 +126,7 @@ Languages merge field by field across layers; arrays are replaced, not appended.
 
 | Language | Extensions | Default server (command) |
 |----------|------------|--------------------------|
-| TypeScript, JavaScript | `.ts .tsx .mts .cts`, `.js .jsx .mjs .cjs` | `typescript` (`typescript-language-server --stdio`) |
+| TypeScript, JavaScript | `.ts .tsx .mts .cts`, `.js .jsx .mjs .cjs` | `typescript` (chosen from the project's SDK; see [below](#typescript-backend-selection)) |
 | Python | `.py .pyi` | `pyright` (`pyright-langserver --stdio`) |
 | Go | `.go` | `gopls` |
 | Rust | `.rs` | `rust` (`rust-analyzer`) |
@@ -138,9 +138,21 @@ Languages merge field by field across layers; arrays are replaced, not appended.
 
 Additional built-in server definitions that no language uses by default include `ruff`, `basedpyright`, `ty`, `eslint`, `oxlint`, `biome`, and `deno`; route a language to them as in the examples. `lsp.status` prints the complete effective list. The [schema](../src/core/config/schema.ts) and [configuration loader](../src/core/config/loader.ts) define validation and merge behavior.
 
-## TypeScript 7 native LSP
+## TypeScript backend selection
 
-The default TypeScript route uses `typescript-language-server`. To use TypeScript 7's native LSP, explicitly configure its project-installed compiler entry; it runs with `--lsp --stdio`. Use an absolute compiler path so monorepo root selection does not change which installation is launched:
+The built-in `typescript` server picks its backend from the SDK the file's project actually installed: the nearest `node_modules/typescript` from the project root (found with `rootMarkers`) up to the workspace root. Declared version ranges in `package.json`, global installations, and packages under other names (such as an `npm:` alias) are not consulted.
+
+| Installed SDK | Launch |
+|---------------|--------|
+| Major version below 7 with `lib/tsserver.js` | `typescript-language-server --stdio` with `initializationOptions.tsserver.path` set to that `tsserver.js` and `useSyntaxServer: "never"` |
+| 7.x with a `bin.tsc` entry in its `package.json` | `node <sdk>/bin/tsc --lsp --stdio`, using `node` from the bound environment; `typescript-language-server` is not needed |
+| None, an unreadable `package.json`, a missing entry, another package name, or another major version | `environment_error` naming the SDK path and the reason |
+
+The decision is made before a server starts. A failed launch is reported as is: another backend or SDK is never tried in its place, a broken SDK is not skipped in favour of one further up, and nothing is installed. TypeScript 7 resolves its platform program (`@typescript/typescript-<platform>-<arch>`) when it starts; when that package is missing the start failure says so.
+
+Each sub-project of a monorepo gets its own choice, so one workspace can run TypeScript 6 and 7 side by side; directory diagnostics check each file with its own project's server. Installing, upgrading, or replacing the SDK is noticed on the next call, and the client for the old backend is replaced. `lsp.status` with `filePath` shows the backend, command, and SDK a file gets without starting a server.
+
+To run something else, define the server yourself. A project or user definition named `typescript` replaces the built-in one, or route the languages to a server with another id:
 
 ```json
 {
@@ -158,4 +170,4 @@ The default TypeScript route uses `typescript-language-server`. To use TypeScrip
 }
 ```
 
-This route starts the selected TypeScript 7 installation directly; a failed launch or unsupported capability is reported. The real integration suite checks its reported server version, diagnostics after edits, cross-file navigation and rename, call hierarchy, and compiler errors. The native entry flags are defined in [Microsoft's LSP entry](https://github.com/microsoft/typescript-go/blob/main/cmd/tsgo/lsp.go).
+Use an absolute compiler path in such a definition so monorepo root selection does not change which installation runs. Asking for `server: "typescript"` explicitly still uses the built-in selection while it is not redefined. The real integration suite runs TypeScript 6 and 7 without any route configuration (diagnostics after edits, navigation, rename, call hierarchy, mixed sub-projects, and the edit hooks); versions below 6 follow the same `lib/tsserver.js` rule but are not run against a real server. The native entry flags are defined in [Microsoft's LSP entry](https://github.com/microsoft/typescript-go/blob/main/cmd/tsgo/lsp.go).

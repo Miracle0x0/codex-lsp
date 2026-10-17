@@ -7,7 +7,7 @@ import type { ToolCallContext } from "../runtime/context.js";
 import { findProjectRoot } from "../runtime/router.js";
 import type { LspRuntime } from "../runtime/runtime.js";
 import { defineLspTool } from "./definition.js";
-import { ToolFailure } from "./failures.js";
+import { formatToolFailure, ToolFailure, toToolFailure } from "./failures.js";
 import { WorkspaceInputShape } from "./schemas.js";
 
 const ToolchainSchema = z.object({
@@ -19,6 +19,8 @@ const ToolchainSchema = z.object({
 	notes: z.array(z.string()),
 	problem: z.string().optional(),
 });
+
+const BackendSchema = z.enum(["configured", "typescript-language-server", "typescript-native"]);
 
 const StatusOutputSchema = z.object({
 	workspaceRoot: z.string().nullable(),
@@ -43,9 +45,10 @@ const StatusOutputSchema = z.object({
 		z.object({
 			id: z.string(),
 			source: z.string(),
-			state: z.enum(["installed", "missing", "disabled"]),
+			state: z.enum(["installed", "missing", "disabled", "sdk-selected"]),
 			command: z.array(z.string()),
 			executable: z.string().nullable(),
+			note: z.string().optional(),
 		}),
 	),
 	languages: z.array(
@@ -62,7 +65,16 @@ const StatusOutputSchema = z.object({
 		.object({
 			path: z.string(),
 			language: z.string(),
-			projectRoots: z.array(z.object({ serverId: z.string(), projectRoot: z.string() })),
+			servers: z.array(
+				z.object({
+					serverId: z.string(),
+					projectRoot: z.string(),
+					backend: BackendSchema.nullable(),
+					command: z.array(z.string()).nullable(),
+					reason: z.string().nullable(),
+					problem: z.string().nullable(),
+				}),
+			),
 			toolchain: ToolchainSchema.nullable(),
 		})
 		.optional(),
@@ -71,6 +83,8 @@ const StatusOutputSchema = z.object({
 			key: z.string(),
 			serverId: z.string(),
 			projectRoot: z.string(),
+			backend: BackendSchema,
+			launch: z.string(),
 			state: z.enum(["initializing", "ready", "dead", "retired"]),
 			environmentId: z.string().nullable(),
 			environmentGeneration: z.number().int().nullable(),
@@ -91,12 +105,16 @@ function describeServers(config: EffectiveConfig, environment: EnvironmentContex
 		const executable = server.command[0]
 			? (findExecutable(server.command[0], environment.variables, config.workspaceRoot) ?? null)
 			: null;
+		const base = { id: server.id, source: server.source, command: [...server.command], executable };
+		if (!server.sdkSelected) return { ...base, state: executable === null ? "missing" : "installed" };
+		// The backend depends on each project's SDK; pass filePath to see the one a file gets.
 		return {
-			id: server.id,
-			source: server.source,
-			state: executable === null ? "missing" : "installed",
-			command: [...server.command],
-			executable,
+			...base,
+			state: "sdk-selected",
+			note:
+				"Chosen per project from node_modules/typescript: below 7 runs " +
+				`${server.command[0]} (${executable === null ? "not found" : "found"} on PATH) with that SDK's tsserver; ` +
+				"7.x runs the SDK's native LSP under node.",
 		};
 	});
 	for (const [id, source] of config.disabledServers) {
@@ -118,13 +136,35 @@ async function describeFile(
 			...file.language.diagnosticServers,
 		]),
 	];
-	const projectRoots = serverIds.flatMap((serverId) => {
+	const servers: NonNullable<StatusOutput["file"]>["servers"] = [];
+	for (const serverId of serverIds) {
 		const server = file.config.servers.get(serverId);
-		return server
-			? [{ serverId, projectRoot: findProjectRoot(file.path, server.rootMarkers, file.workspaceRoot) }]
-			: [];
-	});
-	const firstRoot = projectRoots[0]?.projectRoot;
+		if (server === undefined) continue;
+		const projectRoot = findProjectRoot(file.path, server.rootMarkers, file.workspaceRoot);
+		try {
+			const target = await runtime.resolver.server(file, serverId, context.signal);
+			servers.push({
+				serverId,
+				projectRoot,
+				backend: target.launch.backend,
+				command: [target.executable, ...target.args],
+				reason: target.launch.reason,
+				problem: null,
+			});
+		} catch (error) {
+			const failure = toToolFailure(error);
+			if (failure.code === "cancelled") throw failure;
+			servers.push({
+				serverId,
+				projectRoot,
+				backend: null,
+				command: null,
+				reason: null,
+				problem: formatToolFailure(failure),
+			});
+		}
+	}
+	const firstRoot = servers[0]?.projectRoot;
 	const toolchain =
 		file.language.toolchain && firstRoot !== undefined
 			? await runtime.resolver.toolchain(file.language.toolchain, file, firstRoot, context.signal)
@@ -132,7 +172,7 @@ async function describeFile(
 	return {
 		path: file.path,
 		language: file.language.id,
-		projectRoots,
+		servers,
 		toolchain:
 			toolchain === null
 				? null
@@ -173,7 +213,14 @@ function summarize(status: StatusOutput): string {
 	}
 	if (status.file) {
 		lines.push(`File: ${status.file.path} (${status.file.language})`);
-		for (const root of status.file.projectRoots) lines.push(`  ${root.serverId} project root: ${root.projectRoot}`);
+		for (const server of status.file.servers) {
+			lines.push(`  ${server.serverId} project root: ${server.projectRoot}`);
+			lines.push(
+				server.problem === null
+					? `    ${server.backend}: ${server.command?.join(" ")} (${server.reason})`
+					: `    unavailable: ${server.problem}`,
+			);
+		}
 		const toolchain = status.file.toolchain;
 		if (toolchain) {
 			lines.push(`  ${toolchain.kind} toolchain: ${toolchain.status}; ${toolchain.summary} [${toolchain.source}]`);
@@ -190,12 +237,14 @@ function summarize(status: StatusOutput): string {
 		lines.push(
 			`  ${server.id}: ${server.state}${server.executable ? ` (${server.executable})` : ""}; source=${server.source}`,
 		);
+		if (server.note !== undefined) lines.push(`    ${server.note}`);
 	}
 	lines.push(`Active clients: ${status.clients.length}`);
 	for (const client of status.clients) {
 		lines.push(
 			`  ${client.serverId}: ${client.state}; root=${client.projectRoot}; env=${client.environmentId ?? client.environmentSource}` +
 				`${client.environmentGeneration === null ? "" : `#${client.environmentGeneration}`}; ${client.serverInfo ?? client.executable}` +
+				`; ${client.backend}: ${client.launch}` +
 				`${client.toolchain ? `; ${client.toolchain}` : ""}`,
 		);
 	}
@@ -218,11 +267,16 @@ export const statusTool = defineLspTool({
 	title: "LSP Status",
 	description:
 		"Show configuration, the bound shell environment, server executables, language routes, and active clients. " +
-		"With filePath it also resolves that file's toolchain (interpreter/SDK) without starting a language server.",
+		"With filePath it also resolves that file's toolchain (interpreter/SDK) and the exact server command and backend " +
+		"each of its servers would run, without starting a language server.",
 	annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
 	inputSchema: z.object({
 		...WorkspaceInputShape,
-		filePath: z.string().min(1).optional().describe("File whose language, project root, and toolchain to resolve."),
+		filePath: z
+			.string()
+			.min(1)
+			.optional()
+			.describe("File whose language, project root, toolchain, and server launch to resolve."),
 	}),
 	outputSchema: StatusOutputSchema,
 	async run(runtime, input, context) {

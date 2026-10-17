@@ -3,7 +3,7 @@ import { readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
 
-import { BUILTIN_LANGUAGES, BUILTIN_SERVERS } from "./builtins.js";
+import { BUILTIN_LANGUAGES, BUILTIN_SERVERS, SDK_SELECTED_SERVERS } from "./builtins.js";
 import {
 	type ConfigFile,
 	ConfigFileSchema,
@@ -47,6 +47,8 @@ export interface EffectiveServer {
 	readonly initializationOptions: Readonly<Record<string, unknown>> | undefined;
 	readonly rootMarkers: readonly string[];
 	readonly installHint: string | undefined;
+	/** The built-in definition whose backend is chosen from the project's SDK; never set for configured servers. */
+	readonly sdkSelected: boolean;
 	/** Stable hash of the effective definition; part of the client identity. */
 	readonly hash: string;
 }
@@ -184,6 +186,7 @@ function readLayer(
 }
 
 function toEffectiveServer(id: string, source: ConfigSource, config: ServerConfig): EffectiveServer {
+	const sdkSelected = source === "builtin" && SDK_SELECTED_SERVERS.has(id);
 	return {
 		id,
 		source,
@@ -193,7 +196,8 @@ function toEffectiveServer(id: string, source: ConfigSource, config: ServerConfi
 		initializationOptions: config.initializationOptions,
 		rootMarkers: config.rootMarkers ?? [],
 		installHint: config.installHint,
-		hash: stableHash({ id, ...config }),
+		sdkSelected,
+		hash: stableHash({ id, sdkSelected, ...config }),
 	};
 }
 

@@ -16,4 +16,11 @@ export const TOOLCHAIN_ADAPTERS: Readonly<Record<ToolchainKind, ToolchainAdapter
 	cpp: resolveCpp,
 };
 
-export type { ToolchainAdapter, ToolchainInput, ToolchainResolution } from "./types.js";
+export type {
+	ToolchainAdapter,
+	ToolchainInput,
+	ToolchainInputFile,
+	ToolchainResolution,
+	TypeScriptBackend,
+	TypeScriptSdk,
+} from "./types.js";

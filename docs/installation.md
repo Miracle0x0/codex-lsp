@@ -9,7 +9,7 @@
 | Language | Server | Install |
 |----------|--------|---------|
 | Python | `pyright-langserver` (Pyright); optional `ruff` | `npm install -g pyright`; `pipx install ruff` |
-| TypeScript / JavaScript | `typescript-language-server`, plus `typescript` in the project | `npm install -g typescript-language-server`; `npm install -D typescript` |
+| TypeScript / JavaScript | `typescript` in the project; `typescript-language-server` only for TypeScript below 7 (7.x runs its own native LSP) | `npm install -D typescript`; `npm install -g typescript-language-server` |
 | Go | `gopls` | `go install golang.org/x/tools/gopls@latest` |
 | Rust | `rust-analyzer` | `rustup component add rust-analyzer` |
 | C / C++ | `clangd` (reads `compile_commands.json`) | your system package manager |

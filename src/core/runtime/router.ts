@@ -6,12 +6,12 @@ import { type ConfigService, type EffectiveConfig, type EffectiveLanguage, stabl
 import type { ToolchainKind } from "../config/schema.js";
 import type { EnvironmentContext, EnvironmentService } from "../environment/service.js";
 import { TOOLCHAIN_ADAPTERS, type ToolchainResolution } from "../environment/toolchains/index.js";
-import { ancestors } from "../environment/toolchains/types.js";
+import { ancestors, fileStamp } from "../environment/toolchains/types.js";
 import type { ServerTarget } from "../lsp/client.js";
-import { findExecutable } from "../lsp/command.js";
 import { TOOLCHAIN_CACHE_TTL_MS } from "../lsp/constants.js";
 import { getLanguageId } from "../lsp/language-mappings.js";
 import { ToolFailure } from "../tools/failures.js";
+import { configuredLaunch, mergeSettings, typescriptLaunch } from "./launch.js";
 
 /** One source file resolved against configuration and the call's environment. */
 export interface FileTarget {
@@ -64,26 +64,23 @@ export function findProjectRoot(path: string, markers: readonly string[], worksp
 	return start;
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-	return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-/** Merges `override` onto `base`; nested objects merge, everything else is replaced. */
-export function mergeSettings(
-	base: Readonly<Record<string, unknown>>,
-	override: Readonly<Record<string, unknown>>,
-): Record<string, unknown> {
-	const result: Record<string, unknown> = { ...base };
-	for (const [key, value] of Object.entries(override)) {
-		const current = result[key];
-		result[key] = isRecord(current) && isRecord(value) ? mergeSettings(current, value) : value;
-	}
-	return result;
-}
-
 interface CachedToolchain {
 	readonly at: number;
 	readonly promise: Promise<ToolchainResolution>;
+	/** Set when the probe finished; its input files decide whether the entry is still current. */
+	resolved: ToolchainResolution | undefined;
+}
+
+function inputsUnchanged(resolution: ToolchainResolution | undefined): boolean {
+	return (resolution?.inputs ?? []).every((input) => fileStamp(input.path) === input.stamp);
+}
+
+function requireUsable(toolchain: ToolchainResolution, projectRoot: string): ToolchainResolution {
+	if (toolchain.status !== "unavailable") return toolchain;
+	throw new ToolFailure(
+		"environment_error",
+		`${toolchain.kind} toolchain for ${projectRoot} is unavailable [${toolchain.source}]: ${toolchain.problem}`,
+	);
 }
 
 export class TargetResolver {
@@ -150,7 +147,9 @@ export class TargetResolver {
 	): Promise<ToolchainResolution> {
 		const key = [file.environment.key, projectRoot, kind, stableHash(file.config.environment)].join("|");
 		const cached = this.toolchains.get(key);
-		if (cached !== undefined && this.now() - cached.at < TOOLCHAIN_CACHE_TTL_MS) return cached.promise;
+		if (cached !== undefined && this.now() - cached.at < TOOLCHAIN_CACHE_TTL_MS && inputsUnchanged(cached.resolved)) {
+			return cached.promise;
+		}
 		const promise = TOOLCHAIN_ADAPTERS[kind]({
 			environment: file.environment,
 			projectRoot,
@@ -158,8 +157,16 @@ export class TargetResolver {
 			config: file.config.environment,
 			...(signal ? { signal } : {}),
 		});
-		this.toolchains.set(key, { at: this.now(), promise });
-		promise.catch(() => this.toolchains.delete(key));
+		const entry: CachedToolchain = { at: this.now(), promise, resolved: undefined };
+		this.toolchains.set(key, entry);
+		promise.then(
+			(resolution) => {
+				entry.resolved = resolution;
+			},
+			() => {
+				if (this.toolchains.get(key) === entry) this.toolchains.delete(key);
+			},
+		);
 		return promise;
 	}
 
@@ -177,46 +184,50 @@ export class TargetResolver {
 		}
 		const projectRoot = findProjectRoot(file.path, server.rootMarkers, file.workspaceRoot);
 		const toolchain = file.language.toolchain
-			? await this.toolchain(file.language.toolchain, file, projectRoot, signal)
+			? requireUsable(await this.toolchain(file.language.toolchain, file, projectRoot, signal), projectRoot)
 			: null;
-		if (toolchain?.status === "unavailable") {
-			throw new ToolFailure(
-				"environment_error",
-				`${toolchain.kind} toolchain for ${projectRoot} is unavailable [${toolchain.source}]: ${toolchain.problem}`,
-			);
-		}
-		const [command, ...args] = server.command;
-		const executable =
-			command === undefined ? undefined : findExecutable(command, environment.variables, file.workspaceRoot);
-		if (executable === undefined) {
-			const hint = server.installHint ? `\nInstall: ${server.installHint}` : "";
-			throw new ToolFailure(
-				"server_not_installed",
-				`LSP server '${serverId}' is not installed in this environment: '${command}' was not found (${environment.source} PATH).${hint}`,
-			);
-		}
+		// The SDK-selected server reads the project's TypeScript SDK from the Node toolchain, whatever the route names.
+		const node = !server.sdkSelected
+			? null
+			: toolchain?.kind === "node"
+				? toolchain
+				: requireUsable(await this.toolchain("node", file, projectRoot, signal), projectRoot);
+		const plan =
+			node === null
+				? configuredLaunch(server, environment, file.workspaceRoot)
+				: typescriptLaunch(
+						server,
+						node,
+						environment,
+						file.workspaceRoot,
+						config.files.project?.path ?? config.files.user.path,
+					);
 		const env = { ...environment.variables, ...server.env };
 		const slot = [environment.environmentId ?? environment.source, projectRoot, serverId].join("|");
 		return {
 			key: stableHash({
 				slot,
-				executable,
-				args,
+				backend: plan.launch.backend,
+				executable: plan.executable,
+				args: plan.args,
+				initializationOptions: plan.initializationOptions ?? null,
 				env,
 				server: server.hash,
 				toolchain: toolchain?.fingerprint ?? null,
+				node: node?.fingerprint ?? null,
 			}),
 			slot,
 			server,
-			executable,
-			args,
+			launch: plan.launch,
+			executable: plan.executable,
+			args: plan.args,
 			projectRoot,
 			workspaceRoot: file.workspaceRoot,
 			environment,
 			toolchain,
 			env,
 			settings: mergeSettings(toolchain?.settings ?? {}, server.settings),
-			initializationOptions: server.initializationOptions,
+			initializationOptions: plan.initializationOptions,
 		};
 	}
 }

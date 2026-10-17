@@ -5,6 +5,12 @@ const PYTHON_ROOTS = ["pyproject.toml", "pyrightconfig.json", "setup.py", "setup
 const JVM_ROOTS = ["pom.xml", "build.gradle", "build.gradle.kts", "settings.gradle", "settings.gradle.kts"];
 const NPM = (pkg: string): string => `npm install -g ${pkg}`;
 
+/**
+ * Built-in servers launched from the project's installed SDK instead of their command alone; see
+ * `src/core/runtime/typescript.ts`. A user or project definition with the same id replaces this behaviour.
+ */
+export const SDK_SELECTED_SERVERS: ReadonlySet<string> = new Set(["typescript"]);
+
 /** Built-in server definitions. Languages route to one default server; extra sources come from user config. */
 export const BUILTIN_SERVERS: Readonly<Record<string, ServerConfig>> = {
 	typescript: {

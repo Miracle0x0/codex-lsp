@@ -53,6 +53,46 @@ describeWithTools("TypeScript", ["typescript-language-server"], () => {
 		expect(renameDiagnostics.counts.error).toBe(0);
 		expect(after.counts.error).toBe(0);
 		expect(after.complete).toBe(true);
+		const [client] = w.runtime.manager.activeClients();
+		expect(client?.target.launch.backend).toBe("typescript-language-server");
+		expect(client?.target.initializationOptions).toEqual({
+			tsserver: { useSyntaxServer: "never", path: join(w.root, "node_modules", "typescript", "lib", "tsserver.js") },
+		});
+	});
+
+	it("#given sub-projects on TypeScript 6 and 7 #when checking the whole workspace #then each is checked by its own SDK", async () => {
+		// given
+		const w = createWorkspace();
+		workspaces.push(w);
+		for (const [name, version] of [
+			["old", 6],
+			["new", 7],
+		] as const) {
+			w.write(`packages/${name}/package.json`, `{ "name": "${name}", "type": "module" }\n`);
+			w.write(
+				`packages/${name}/tsconfig.json`,
+				'{ "compilerOptions": { "strict": true, "target": "ES2022", "module": "NodeNext", "moduleResolution": "NodeNext", "noEmit": true } }\n',
+			);
+			linkTypeScript(join(w.root, "packages", name), version);
+			w.write(`packages/${name}/src/main.ts`, `export const ${name}Value: number = "${name}";\n`);
+		}
+
+		// when
+		const batch = batchOf((await w.call("diagnostics", { filePath: "packages", severity: "error" })).data);
+
+		// then
+		expect(batch.complete).toBe(true);
+		expect(batch.diagnostics.map((item) => [item.path, item.code]).sort()).toEqual([
+			[join(w.root, "packages", "new", "src", "main.ts"), 2322],
+			[join(w.root, "packages", "old", "src", "main.ts"), 2322],
+		]);
+		const clients = w.runtime.manager
+			.activeClients()
+			.map((client) => [client.target.projectRoot, client.target.launch.backend, client.serverInfo?.version ?? ""]);
+		expect(clients.sort()).toEqual([
+			[join(w.root, "packages", "new"), "typescript-native", expect.stringMatching(/^7\./)],
+			[join(w.root, "packages", "old"), "typescript-language-server", expect.any(String)],
+		]);
 	});
 
 	it("#given more than fifty files #when checking the directory #then every file is checked", async () => {
@@ -93,6 +133,16 @@ describeWithTools("TypeScript", ["typescript-language-server"], () => {
 		expect(toolchain.facts["typescriptSdk"]).toBe(join(w.root, "node_modules", "typescript"));
 		expect(toolchain.facts["typescriptVersion"]).toMatch(/^\d+\.\d+/);
 		expect(toolchain.facts["nodeVersion"]).toMatch(/^v\d+/);
+		expect(toolchain.facts["typescriptBackend"]).toBe("typescript-language-server");
+		expect(status.data["file"]).toMatchObject({
+			servers: [
+				{
+					serverId: "typescript",
+					backend: "typescript-language-server",
+					reason: expect.stringContaining(join(w.root, "node_modules", "typescript", "lib", "tsserver.js")),
+				},
+			],
+		});
 	});
 
 	it("#given a line with astral characters before a symbol #when hovering #then the code-point column finds it and maps back", async () => {

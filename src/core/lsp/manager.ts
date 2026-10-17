@@ -18,6 +18,9 @@ export interface ClientSnapshot {
 	readonly key: string;
 	readonly serverId: string;
 	readonly projectRoot: string;
+	readonly backend: ServerTarget["launch"]["backend"];
+	/** Why this command was chosen. */
+	readonly launch: string;
 	readonly environmentId: string | null;
 	readonly environmentGeneration: number | null;
 	readonly environmentSource: string;
@@ -233,6 +236,8 @@ export class LspManager {
 				key: target.key,
 				serverId: target.server.id,
 				projectRoot: target.projectRoot,
+				backend: target.launch.backend,
+				launch: target.launch.reason,
 				environmentId: target.environment.environmentId,
 				environmentGeneration: target.environment.generation,
 				environmentSource: target.environment.source,

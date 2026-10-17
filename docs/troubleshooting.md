@@ -27,9 +27,14 @@ The server executable is not on the `PATH` of the bound environment. Install it 
 - After activating another environment, the next check uses it if the shell integration is installed (it records a new generation at the next prompt) or after relaunching with `codex-lsp launch`.
 - Pyright cannot resolve editable installs that rely on import hooks; that is a Pyright limitation.
 
-## TypeScript errors such as "Cannot find module" or initialization failures
+## TypeScript errors such as "No TypeScript SDK", "Cannot find module", or initialization failures
 
-typescript-language-server needs the `typescript` package in the project (`npm install -D typescript`); the plugin does not lend its own. A custom `typescript` server definition must keep `tsserver.useSyntaxServer: "never"` (see [Configuration](configuration.md)).
+The built-in `typescript` server needs the `typescript` package in the file's project (`npm install -D typescript`); the plugin does not lend its own or fall back to a global one. Run `lsp.status` with `filePath`: each server shows the backend and command the file gets, or the reason it cannot start.
+
+- "No TypeScript SDK was found" lists the `node_modules/typescript` paths that were searched; install the SDK in the project or define the server explicitly.
+- "The TypeScript SDK at ... cannot be used" names the problem: an unreadable `package.json`, a missing `lib/tsserver.js` (below 7) or `bin.tsc` entry (7.x), a package that is not `typescript`, or an unsupported major version. Reinstall the SDK, or define the server explicitly (see [TypeScript backend selection](configuration.md#typescript-backend-selection)).
+- For an SDK below 7, `typescript-language-server` must be on the environment's `PATH`; 7.x does not need it. A TypeScript 7 start failure that mentions `@typescript/typescript-<platform>-<arch>` means the SDK's platform package is not installed.
+- A custom `typescript` server definition around typescript-language-server must keep `tsserver.useSyntaxServer: "never"`.
 
 ## Rust results are slow or incomplete
 

@@ -1,3 +1,4 @@
+import { statSync } from "node:fs";
 import { dirname, parse } from "node:path";
 
 import { type EffectiveEnvironmentConfig, stableHash } from "../../config/loader.js";
@@ -25,8 +26,32 @@ export interface ToolchainResolution {
 	readonly problem?: string;
 	/** Server settings derived from the toolchain, merged under configured settings. */
 	readonly settings?: Readonly<Record<string, unknown>>;
+	/** The project's TypeScript SDK as found from the project root; set by the Node adapter. */
+	readonly typescript?: TypeScriptSdk;
+	/** Files the result was read from, with their state before reading; a changed stamp invalidates a cached result. */
+	readonly inputs?: readonly ToolchainInputFile[];
 	readonly fingerprint: string;
 }
+
+export interface ToolchainInputFile {
+	readonly path: string;
+	readonly stamp: string;
+}
+
+export type TypeScriptBackend = "typescript-language-server" | "typescript-native";
+
+/** The `node_modules/typescript` package nearest to a project; a broken package is reported, never skipped. */
+export type TypeScriptSdk =
+	| { readonly status: "missing"; readonly searched: readonly string[] }
+	| { readonly status: "invalid"; readonly path: string; readonly version: string | null; readonly problem: string }
+	| {
+			readonly status: "ready";
+			readonly path: string;
+			readonly version: string;
+			readonly backend: TypeScriptBackend;
+			/** `lib/tsserver.js` for the tsserver backend, the `bin.tsc` script for the native LSP. */
+			readonly entry: string;
+	  };
 
 export type ToolchainAdapter = (input: ToolchainInput) => Promise<ToolchainResolution>;
 
@@ -43,6 +68,16 @@ export function ancestors(start: string, stop: string | undefined): string[] {
 		current = parent;
 	}
 	return result;
+}
+
+/** Identity and modification state of a path, or "missing"; follows symbolic links. */
+export function fileStamp(path: string): string {
+	try {
+		const stat = statSync(path);
+		return `${stat.dev}:${stat.ino}:${stat.mtimeMs}:${stat.size}`;
+	} catch {
+		return "missing";
+	}
 }
 
 export function firstLine(text: string): string {

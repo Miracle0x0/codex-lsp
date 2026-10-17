@@ -1,9 +1,12 @@
 import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 
+import { BaselineStore } from "../../src/codex/hook/baseline.js";
+import { EditFeedback } from "../../src/codex/hook/edit-feedback.js";
+import { toolchainEnv } from "../support/context.js";
 import {
 	batchOf,
 	callItemsOf,
@@ -24,17 +27,20 @@ afterEach(async () => {
 	for (const workspace of workspaces.splice(0)) await workspace.close();
 });
 
-function workspace(): Workspace {
-	const created = createWorkspace({
-		schemaVersion: 1,
-		servers: {
-			typescript7: {
-				command: [process.execPath, compiler, "--lsp", "--stdio"],
-				rootMarkers: ["tsconfig.json", "package.json"],
-			},
+const EXPLICIT_ROUTE = {
+	schemaVersion: 1,
+	servers: {
+		typescript7: {
+			command: [process.execPath, compiler, "--lsp", "--stdio"],
+			rootMarkers: ["tsconfig.json", "package.json"],
 		},
-		languages: { typescript: { semanticServer: "typescript7", diagnosticServers: ["typescript7"] } },
-	});
+	},
+	languages: { typescript: { semanticServer: "typescript7", diagnosticServers: ["typescript7"] } },
+};
+
+/** A TypeScript 7 project; without `config` the built-in route chooses the backend from the SDK. */
+function workspace(config: unknown = EXPLICIT_ROUTE): Workspace {
+	const created = createWorkspace(config === null ? undefined : config);
 	workspaces.push(created);
 	linkTypeScript(created.root, 7);
 	created.write("package.json", '{ "name": "ts7-fixture", "type": "module" }\n');
@@ -126,5 +132,86 @@ describe("TypeScript 7 native language server", () => {
 		expect(before.stdout).toContain("TS2322");
 		w.write("main.ts", "export const count: number = 1;\n");
 		expect(compile().status).toBe(0);
+	});
+});
+
+/** An environment whose PATH holds only node, so typescript-language-server cannot be found. */
+function nodeOnlyEnvironment(w: Workspace): string {
+	const env = Object.fromEntries(Object.entries(toolchainEnv()).filter(([name]) => name.toUpperCase() !== "PATH"));
+	w.snapshot("node-only", { ...env, PATH: dirname(process.execPath) });
+	return "node-only";
+}
+
+const PATCH_OK = "Exit code: 0\nWall time: 0 seconds\nOutput:\nSuccess. Updated the following files:\n";
+
+describe("TypeScript 7 through the built-in route", () => {
+	it("#given no route configuration and no adapter on PATH #when checking and navigating #then the SDK's native LSP serves the file", async () => {
+		const w = workspace(null);
+		const environmentId = nodeOnlyEnvironment(w);
+		const library = 'export function greet(name: string): string { return "hi " + name; }\n';
+		const main = 'import { greet } from "./lib.js";\nexport const count: number = greet("x");\n';
+		const libPath = w.write("lib.ts", library);
+		w.write("main.ts", main);
+
+		const before = batchOf((await w.call("diagnostics", { filePath: "main.ts", environmentId })).data);
+		const definition = locationsOf(
+			(await w.call("goto_definition", { filePath: "main.ts", environmentId, ...positionOf(main, "greet", 1) }))
+				.data,
+		);
+		w.write("main.ts", 'import { greet } from "./lib.js";\nexport const message: string = greet("x");\n');
+		const after = batchOf((await w.call("diagnostics", { filePath: "main.ts", environmentId })).data);
+		const status = await w.call("status", { filePath: "main.ts", environmentId });
+
+		expect(before.diagnostics).toEqual(
+			expect.arrayContaining([expect.objectContaining({ providerId: "typescript", code: 2322 })]),
+		);
+		expect(definition.map((item) => item.path)).toContain(libPath);
+		expect(after.complete).toBe(true);
+		expect(after.counts.error).toBe(0);
+		const clients = w.runtime.manager.activeClients();
+		expect(clients).toHaveLength(1);
+		expect(clients[0]?.target.launch.backend).toBe("typescript-native");
+		expect(clients[0]?.target.args).toEqual([
+			join(w.root, "node_modules", "typescript", "bin", "tsc"),
+			"--lsp",
+			"--stdio",
+		]);
+		expect(clients[0]?.serverInfo?.version).toMatch(/^7\./);
+		expect(status.data).toMatchObject({
+			file: { servers: [{ serverId: "typescript", backend: "typescript-native", problem: null }] },
+			clients: [expect.objectContaining({ backend: "typescript-native", state: "ready" })],
+		});
+	});
+
+	it("#given no route configuration #when the edit hooks run around a patch #then they use the native backend and report added and resolved errors", async () => {
+		const w = workspace(null);
+		const feedback = new EditFeedback(w.runtime, new BaselineStore());
+		const signal = new AbortController().signal;
+		const path = w.write("main.ts", "export const count: number = 1;\n");
+		const patchCall = async (id: string, content: string) => {
+			const event = {
+				sessionId: "session",
+				toolUseId: id,
+				cwd: w.root,
+				toolName: "apply_patch",
+				toolInput: { command: "*** Begin Patch\n*** Update File: main.ts\n@@\n*** End Patch" },
+			};
+			await feedback.before(event, signal);
+			w.write("main.ts", content);
+			return feedback.after({ ...event, toolResponse: PATCH_OK }, signal);
+		};
+
+		const broken = await patchCall("edit-1", 'export const count: number = "wrong";\n');
+		const fixed = await patchCall("edit-2", "export const count: number = 2;\n");
+
+		expect(broken.reports).toEqual([
+			expect.objectContaining({ path, added: [expect.objectContaining({ code: 2322, providerId: "typescript" })] }),
+		]);
+		expect(fixed.reports).toEqual([
+			expect.objectContaining({ path, added: [], resolved: [expect.objectContaining({ code: 2322 })] }),
+		]);
+		expect(w.runtime.manager.activeClients().map((client) => client.target.launch.backend)).toEqual([
+			"typescript-native",
+		]);
 	});
 });

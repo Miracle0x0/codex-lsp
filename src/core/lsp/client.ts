@@ -42,6 +42,14 @@ import { type SpawnedProcess, spawnProcess } from "./process.js";
 const REQUEST_CANCELLED = -32800;
 const STDERR_LINES = 100;
 
+/** How a target's command was chosen. */
+export interface ServerLaunch {
+	/** "configured" runs the definition's own command; the others were chosen from the project's TypeScript SDK. */
+	readonly backend: "configured" | "typescript-language-server" | "typescript-native";
+	/** What the choice was based on, for status output. */
+	readonly reason: string;
+}
+
 /** Everything needed to start one language server process for one environment and project. */
 export interface ServerTarget {
 	/** Client identity: changes when the server, environment variables, toolchain, or project root change. */
@@ -49,6 +57,7 @@ export interface ServerTarget {
 	/** Environment + project + server; a new key in the same slot replaces the old client. */
 	readonly slot: string;
 	readonly server: EffectiveServer;
+	readonly launch: ServerLaunch;
 	readonly executable: string;
 	readonly args: readonly string[];
 	readonly projectRoot: string;

@@ -69,6 +69,7 @@ export function makeTarget(serverId: string, options: { slot?: string; key?: str
 		initializationOptions: undefined,
 		rootMarkers: [],
 		installHint: undefined,
+		sdkSelected: false,
 		hash: serverId,
 	};
 	const slot = options.slot ?? `unbound|/root|${serverId}`;
@@ -76,6 +77,7 @@ export function makeTarget(serverId: string, options: { slot?: string; key?: str
 		key: options.key ?? `${slot}#1`,
 		slot,
 		server,
+		launch: { backend: "configured", reason: "test target" },
 		executable: "/usr/bin/fake-server",
 		args: [],
 		projectRoot: "/root",
