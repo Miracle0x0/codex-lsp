@@ -1,8 +1,8 @@
 import { type ChildProcess, spawn, spawnSync } from "node:child_process";
 import { existsSync, statSync } from "node:fs";
-import { delimiter, join } from "node:path";
 
 import { reportBestEffortCleanupError } from "./cleanup-errors.js";
+import { envValue } from "./command.js";
 import { LspInvalidPathError, LspProcessSpawnError } from "./errors.js";
 
 export interface SpawnedProcess {
@@ -110,60 +110,25 @@ function isWindowsShellShim(command: string): boolean {
 	return lowerCommand.endsWith(".cmd") || lowerCommand.endsWith(".bat");
 }
 
-function splitPath(pathValue: string, platform: NodeJS.Platform): string[] {
-	const separator = platform === "win32" ? ";" : delimiter;
-	return pathValue.split(separator).filter(Boolean);
-}
-
-function getWindowsPathExtensions(env: Record<string, string | undefined>): string[] {
-	const rawExtensions = env["PATHEXT"] ?? ".COM;.EXE;.BAT;.CMD";
-	const extensions = rawExtensions
-		.split(";")
-		.map((extension) => extension.trim())
-		.filter(Boolean)
-		.map((extension) => (extension.startsWith(".") ? extension : `.${extension}`));
-	return [...new Set(["", ...extensions, ".exe", ".cmd", ".bat"])];
-}
-
-function resolveWindowsCommand(command: string, env: Record<string, string | undefined>): string {
-	const hasPathSeparator = command.includes("/") || command.includes("\\");
-	const pathValue = env["PATH"] ?? env["Path"] ?? "";
-	const baseDirectories = hasPathSeparator ? [""] : splitPath(pathValue, "win32");
-	const extensions = getWindowsPathExtensions(env);
-
-	for (const baseDirectory of baseDirectories) {
-		for (const extension of extensions) {
-			const candidate = baseDirectory ? join(baseDirectory, `${command}${extension}`) : `${command}${extension}`;
-			if (existsSync(candidate)) return candidate;
-		}
-	}
-
-	return command;
-}
-
+/**
+ * How to start an executable that `findExecutable` already resolved. Windows cannot start `.cmd`/`.bat`
+ * shims directly, so they run through the command processor named by the child's own environment.
+ */
 export function createSpawnCommand(
-	command: string[],
+	command: readonly string[],
+	env: Readonly<Record<string, string | undefined>>,
 	platform: NodeJS.Platform = process.platform,
-	commandProcessor: string = process.env["ComSpec"] ?? "cmd.exe",
-	env: Record<string, string | undefined> = process.env,
 ): PreparedSpawnCommand {
 	const [cmd, ...args] = command;
 	if (!cmd) {
 		throw new LspProcessSpawnError("[lsp] empty command");
 	}
-
-	if (platform !== "win32") {
+	if (platform !== "win32" || !isWindowsShellShim(cmd)) {
 		return { command: cmd, args, shell: false };
 	}
-
-	const resolvedCommand = resolveWindowsCommand(cmd, env);
-	if (!isWindowsShellShim(resolvedCommand)) {
-		return { command: resolvedCommand, args, shell: false };
-	}
-
 	return {
-		command: commandProcessor,
-		args: ["/d", "/s", "/c", resolvedCommand, ...args],
+		command: envValue(env, "ComSpec", platform) ?? "cmd.exe",
+		args: ["/d", "/s", "/c", cmd, ...args],
 		shell: false,
 	};
 }
@@ -174,17 +139,7 @@ export function spawnProcess(command: string[], options: SpawnOptions): SpawnedP
 		throw new LspInvalidPathError(`[lsp] ${cwdValidation.error}`);
 	}
 
-	const [cmd] = command;
-	if (!cmd) {
-		throw new LspProcessSpawnError("[lsp] empty command");
-	}
-
-	const preparedCommand = createSpawnCommand(
-		command,
-		process.platform,
-		process.env["ComSpec"] ?? "cmd.exe",
-		options.env,
-	);
+	const preparedCommand = createSpawnCommand(command, options.env);
 	const proc = spawn(preparedCommand.command, preparedCommand.args, {
 		cwd: options.cwd,
 		env: options.env,

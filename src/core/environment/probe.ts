@@ -34,10 +34,10 @@ function neutralCwd(): string {
 	return neutralDirectory;
 }
 
-/** Runs a short-lived toolchain query without a shell and with a hard timeout. */
+/** Runs a short-lived toolchain query (an executable `findExecutable` resolved) without a shell and with a hard timeout. */
 export function runProbe(executable: string, args: readonly string[], options: ProbeOptions): Promise<ProbeResult> {
 	return new Promise((resolve) => {
-		const prepared = createSpawnCommand([executable, ...args], process.platform, options.env["ComSpec"], options.env);
+		const prepared = createSpawnCommand([executable, ...args], options.env);
 		let stdout = "";
 		let stderr = "";
 		let settled = false;

@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -63,56 +63,44 @@ function killPidBestEffort(pid: number): void {
 }
 
 describe("createSpawnCommand", () => {
-	it("#given windows executable command #when building spawn command #then it avoids shell mode", () => {
-		// given
-		const command = ["typescript-language-server", "--stdio"];
-
+	it("#given a resolved windows executable #when building the spawn command #then it starts directly without a shell", () => {
 		// when
-		const prepared = createSpawnCommand(command, "win32", "cmd.exe");
+		const prepared = createSpawnCommand(["C:\\bin\\gopls.exe", "serve"], {}, "win32");
+
+		// then
+		expect(prepared).toEqual({ command: "C:\\bin\\gopls.exe", args: ["serve"], shell: false });
+	});
+
+	it("#given a resolved windows cmd shim #when building the spawn command #then the child environment's command processor runs it", () => {
+		// when
+		const prepared = createSpawnCommand(
+			["C:\\npm\\typescript-language-server.cmd", "--stdio"],
+			{ COMSPEC: "C:\\Windows\\System32\\cmd.exe" },
+			"win32",
+		);
 
 		// then
 		expect(prepared).toEqual({
-			command: "typescript-language-server",
-			args: ["--stdio"],
+			command: "C:\\Windows\\System32\\cmd.exe",
+			args: ["/d", "/s", "/c", "C:\\npm\\typescript-language-server.cmd", "--stdio"],
 			shell: false,
 		});
 	});
 
-	it("#given windows cmd shim #when building spawn command #then it uses cmd only for the shim", () => {
-		// given
-		const command = ["typescript-language-server.cmd", "--stdio"];
-
+	it("#given a cmd shim without ComSpec in the child environment #when building the spawn command #then cmd.exe is used", () => {
 		// when
-		const prepared = createSpawnCommand(command, "win32", "cmd.exe");
+		const prepared = createSpawnCommand(["C:\\npm\\pyright.bat"], {}, "win32");
 
 		// then
-		expect(prepared).toEqual({
-			command: "cmd.exe",
-			args: ["/d", "/s", "/c", "typescript-language-server.cmd", "--stdio"],
-			shell: false,
-		});
+		expect(prepared.command).toBe("cmd.exe");
 	});
 
-	it("#given windows PATH shim #when resolving spawn command #then it executes the shim without shell mode", () => {
-		// given
-		const binaryDirectory = mkdtempSync(join(tmpdir(), "codex-lsp-bin-"));
-		tempDirectories.push(binaryDirectory);
-		mkdirSync(binaryDirectory, { recursive: true });
-		const shimPath = join(binaryDirectory, "typescript-language-server.cmd");
-		writeFileSync(shimPath, "@echo off\n");
-
+	it("#given a posix command named like a shim #when building the spawn command #then it is not wrapped", () => {
 		// when
-		const prepared = createSpawnCommand(["typescript-language-server", "--stdio"], "win32", "cmd.exe", {
-			PATH: binaryDirectory,
-			PATHEXT: ".cmd;.exe",
-		});
+		const prepared = createSpawnCommand(["/opt/tools/run.cmd", "-x"], { ComSpec: "cmd.exe" }, "linux");
 
 		// then
-		expect(prepared).toEqual({
-			command: "cmd.exe",
-			args: ["/d", "/s", "/c", shimPath, "--stdio"],
-			shell: false,
-		});
+		expect(prepared).toEqual({ command: "/opt/tools/run.cmd", args: ["-x"], shell: false });
 	});
 });
 

@@ -3,13 +3,21 @@ import { delimiter, isAbsolute, join, resolve } from "node:path";
 
 type Env = Readonly<Record<string, string | undefined>>;
 
+/** Reads a variable the way the platform does: Windows variable names are case-insensitive. */
+export function envValue(env: Env, name: string, platform: NodeJS.Platform = process.platform): string | undefined {
+	const exact = env[name];
+	if (exact !== undefined || platform !== "win32") return exact;
+	const wanted = name.toLowerCase();
+	for (const [key, value] of Object.entries(env)) if (key.toLowerCase() === wanted) return value;
+	return undefined;
+}
+
 function pathEntries(env: Env): string[] {
-	const value = process.platform === "win32" ? (env["PATH"] ?? env["Path"] ?? "") : (env["PATH"] ?? "");
-	return value.split(delimiter).filter((entry) => entry.length > 0);
+	return (envValue(env, "PATH") ?? "").split(delimiter).filter((entry) => entry.length > 0);
 }
 
 function windowsExtensions(env: Env): string[] {
-	const raw = env["PATHEXT"] ?? ".COM;.EXE;.BAT;.CMD";
+	const raw = envValue(env, "PATHEXT") ?? ".COM;.EXE;.BAT;.CMD";
 	const extensions = raw
 		.split(";")
 		.map((extension) => extension.trim())
@@ -41,6 +49,7 @@ function hasPathSeparator(command: string): boolean {
 /**
  * Resolves a configured command the way the bound environment would: absolute paths as-is,
  * relative paths against `baseDir` (the workspace root), bare names through the environment PATH.
+ * This is the only lookup: processes are started from the path it returns.
  */
 export function findExecutable(command: string, env: Env, baseDir?: string): string | undefined {
 	if (isAbsolute(command)) return withExtensions(command, env);
