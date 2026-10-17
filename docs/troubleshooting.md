@@ -22,7 +22,7 @@ The server executable is not on the `PATH` of the bound environment. Install it 
 
 ## Diagnostics use the wrong Python, Node, or toolchain
 
-- `lsp.status` with `filePath` shows the interpreter or SDK and where it came from. `source: "unbound"` means no shell environment is bound; start Codex with `codex-lsp launch` from the activated shell (see [Shell environments](environments.md)).
+- `lsp.status` with `filePath` shows the interpreter or SDK and where it came from. `source: "unbound"` means no shell environment is bound; start Codex with `codex-lsp launch` from the activated shell (see [Shell environments](environments.md)). `Environment: unusable` or `[environment_error] the launcher's environment binding is unusable` means the launcher's variables were malformed; restart Codex with `codex-lsp launch`.
 - "VIRTUAL_ENV is ... but the PATH interpreter ..." means the snapshot is inconsistent (for example `VIRTUAL_ENV` exported without activating). Activate the environment properly, or pin `environment.python.interpreter`.
 - After activating another environment, the next check uses it if the shell integration is installed (it records a new generation at the next prompt) or after relaunching with `codex-lsp launch`.
 - Pyright cannot resolve editable installs that rely on import hooks; that is a Pyright limitation.

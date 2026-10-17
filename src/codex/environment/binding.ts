@@ -16,8 +16,14 @@ export interface LaunchBinding {
 	readonly stateDir: string;
 	/** Environment captured by the launcher for this Codex process; undefined when none is bound. */
 	readonly environmentId: string | undefined;
-	readonly warnings: readonly string[];
+	/**
+	 * Why a binding the launcher passed cannot be used. Calls that would use it must fail with this instead of
+	 * quietly analyzing code in the MCP process's own environment.
+	 */
+	readonly problem: string | undefined;
 }
+
+const RELAUNCH = "start Codex again with 'codex-lsp launch'";
 
 /**
  * Reads the launcher's binding. The manifest lives at `<stateDir>/environments/<id>/manifest.json`, so it
@@ -27,11 +33,14 @@ export function launchBinding(env: NodeJS.ProcessEnv): LaunchBinding {
 	const fallback = captureStateDir(env);
 	const id = env[CONTEXT_ID_ENV];
 	const manifest = env[MANIFEST_ENV];
-	if (id === undefined || id === "") return { stateDir: fallback, environmentId: undefined, warnings: [] };
-	if (!ENVIRONMENT_ID_PATTERN.test(id)) {
-		return { stateDir: fallback, environmentId: undefined, warnings: [`ignoring invalid ${CONTEXT_ID_ENV}`] };
-	}
-	if (manifest === undefined || manifest === "") return { stateDir: fallback, environmentId: id, warnings: [] };
+	const unusable = (reason: string): LaunchBinding => ({
+		stateDir: fallback,
+		environmentId: undefined,
+		problem: `the launcher's environment binding is unusable: ${reason}; ${RELAUNCH}`,
+	});
+	if (id === undefined || id === "") return { stateDir: fallback, environmentId: undefined, problem: undefined };
+	if (!ENVIRONMENT_ID_PATTERN.test(id)) return unusable(`${CONTEXT_ID_ENV} is not a valid environment id`);
+	if (manifest === undefined || manifest === "") return { stateDir: fallback, environmentId: id, problem: undefined };
 	const path = normalize(manifest);
 	const environmentDir = dirname(path);
 	const environments = dirname(environmentDir);
@@ -41,11 +50,7 @@ export function launchBinding(env: NodeJS.ProcessEnv): LaunchBinding {
 		basename(environmentDir) !== id ||
 		basename(environments) !== "environments"
 	) {
-		return {
-			stateDir: fallback,
-			environmentId: undefined,
-			warnings: [`ignoring ${CONTEXT_ID_ENV}: ${MANIFEST_ENV} is not <stateDir>/environments/${id}/manifest.json`],
-		};
+		return unusable(`${MANIFEST_ENV} is not <stateDir>/environments/${id}/manifest.json`);
 	}
-	return { stateDir: dirname(environments), environmentId: id, warnings: [] };
+	return { stateDir: dirname(environments), environmentId: id, problem: undefined };
 }

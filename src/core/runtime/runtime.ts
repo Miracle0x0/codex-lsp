@@ -28,6 +28,11 @@ export interface LspRuntimeOptions {
 	readonly stateDir?: string;
 	/** Environment used when a call names none (for example the one a launcher bound at startup). */
 	readonly defaultEnvironmentId?: string;
+	/**
+	 * Set when the host passed a default environment that cannot be used. Calls that name no environment then
+	 * fail with this `environment_error` instead of falling back to the process environment.
+	 */
+	readonly defaultEnvironmentError?: string;
 	readonly manager?: LspManager;
 	readonly processEnv?: NodeJS.ProcessEnv;
 }
@@ -54,6 +59,7 @@ export class LspRuntime {
 	readonly edits: WorkspaceEditCoordinator;
 	readonly defaultWorkspaceRoot: string | undefined;
 	readonly defaultEnvironmentId: string | undefined;
+	private readonly defaultEnvironmentError: string | undefined;
 	private readonly journals = new Map<string, FileChangeJournal>();
 
 	constructor(options: LspRuntimeOptions) {
@@ -61,6 +67,7 @@ export class LspRuntime {
 		this.manager = options.manager ?? new LspManager();
 		this.defaultWorkspaceRoot = options.defaultWorkspaceRoot;
 		this.defaultEnvironmentId = options.defaultEnvironmentId;
+		this.defaultEnvironmentError = options.defaultEnvironmentError;
 		this.environments = new EnvironmentService({
 			...(options.stateDir === undefined ? {} : { stateDir: options.stateDir }),
 			...(options.processEnv === undefined ? {} : { processEnv: options.processEnv }),
@@ -78,8 +85,14 @@ export class LspRuntime {
 		return resolveToolPath(path, this.workspaceRoot(input, context));
 	}
 
+	/** The call's environment: its own, the host's, or the default; an unusable default is an error. */
 	environmentId(input: { readonly environmentId?: string | undefined }, context: ToolCallContext): string | undefined {
-		return input.environmentId ?? context.environmentId ?? this.defaultEnvironmentId;
+		const named = input.environmentId ?? context.environmentId;
+		if (named !== undefined) return named;
+		if (this.defaultEnvironmentError !== undefined) {
+			throw new ToolFailure("environment_error", this.defaultEnvironmentError);
+		}
+		return this.defaultEnvironmentId;
 	}
 
 	/** Resolves a regular source file argument. */

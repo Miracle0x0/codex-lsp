@@ -222,7 +222,7 @@ Hook 请求直接携带配置插值后的 `cwd`、`sessionId`、`toolUseId`，�
                            explicit environmentId
 ```
 
-[launch()](src/codex/launch.ts) 先采集环境，再启动 `codex --no-daemon`，把 `CODEX_LSP_CONTEXT_ID` 和 `CODEX_LSP_ENV_MANIFEST` 放入子进程环境。独立宿主进程使绑定能够进入新启动的 MCP 服务，避免依赖已有 daemon 启动时保留的环境。launch 快照与父 shell 是不同 ID；父子关系本身不会让 launch 快照自动跟随父快照变化。
+[launch()](src/codex/launch.ts) 先采集环境，再启动 `codex --no-daemon`，把 `CODEX_LSP_CONTEXT_ID` 和 `CODEX_LSP_ENV_MANIFEST` 放入子进程环境。独立宿主进程使绑定能够进入新启动的 MCP 服务，避免依赖已有 daemon 启动时保留的环境。launch 快照与父 shell 是不同 ID；父子关系本身不会让 launch 快照自动跟随父快照变化。MCP 进程收到的绑定变量格式无效时（ID 不合法，或清单路径不符合 `<stateDir>/environments/<id>/manifest.json`），[launchBinding()](src/codex/environment/binding.ts) 记录原因，运行时不再回退到 MCP 进程环境：未自行指定环境的调用以 `environment_error` 失败，Hook 把失败写入反馈，`lsp.status` 显示环境不可用；显式指定环境的调用不受影响。
 
 ### 5.2 快照持久化与应用
 

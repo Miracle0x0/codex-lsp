@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- An unusable launcher binding (malformed `CODEX_LSP_CONTEXT_ID` or `CODEX_LSP_ENV_MANIFEST`) no longer falls back to the MCP process environment: calls that name no environment fail with `[environment_error]`, hooks report it, and `lsp.status` shows it.
 - Layer the tests (default, platform, integration, contract, perf) with isolated fixtures: private home, state, and configuration for every scenario. Suites skip with the reason when their tools are missing and fail instead when `CODEX_LSP_REQUIRE_TOOLS=1` (CI). Conda cases create their own environments; the contract suite no longer needs `CODEX_LSP_CONTRACT=1`.
 - `dist/build-info.json` records the sources a build came from; tests rebuild and packaging refuses when it does not match.
 - Route every diagnostics check through one request; configuration file locations are passed in by the entry point instead of read from the global environment.

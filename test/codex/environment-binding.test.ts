@@ -3,6 +3,8 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { launchBinding } from "../../src/codex/environment/binding.js";
+import { createLspRuntime } from "../../src/core/index.js";
+import { isolatedContext } from "../support/context.js";
 
 const STATE = "/state/codex-lsp";
 const ID = "env-launch-0001";
@@ -16,18 +18,18 @@ describe("launch environment binding", () => {
 		};
 
 		// when / then
-		expect(launchBinding(env)).toEqual({ stateDir: STATE, environmentId: ID, warnings: [] });
+		expect(launchBinding(env)).toEqual({ stateDir: STATE, environmentId: ID, problem: undefined });
 	});
 
 	it("#given no binding #when reading #then nothing is bound and the default state directory is used", () => {
 		expect(launchBinding({ CODEX_LSP_STATE_DIR: STATE })).toEqual({
 			stateDir: STATE,
 			environmentId: undefined,
-			warnings: [],
+			problem: undefined,
 		});
 	});
 
-	it("#given an invalid id or a manifest for another id #when reading #then the binding is refused with a warning", () => {
+	it("#given an invalid id or a manifest for another id #when reading #then nothing is bound and the problem is reported", () => {
 		// given
 		const invalid = launchBinding({ CODEX_LSP_CONTEXT_ID: "../../etc", CODEX_LSP_STATE_DIR: STATE });
 		const mismatched = launchBinding({
@@ -38,8 +40,27 @@ describe("launch environment binding", () => {
 
 		// then
 		expect(invalid.environmentId).toBeUndefined();
-		expect(invalid.warnings[0]).toContain("invalid CODEX_LSP_CONTEXT_ID");
+		expect(invalid.problem).toContain("CODEX_LSP_CONTEXT_ID is not a valid environment id");
 		expect(mismatched.environmentId).toBeUndefined();
-		expect(mismatched.warnings[0]).toContain("is not");
+		expect(mismatched.problem).toContain("CODEX_LSP_ENV_MANIFEST is not");
+	});
+});
+
+describe("runtime default environment", () => {
+	it("#given an unusable default binding #when a call names its own environment #then that one is used, otherwise the call fails", async () => {
+		// given
+		const context = isolatedContext("lsp-binding");
+		const runtime = createLspRuntime({ config: context.config, defaultEnvironmentError: "binding is unusable" });
+		const call = { signal: new AbortController().signal };
+
+		try {
+			// when / then
+			expect(runtime.environmentId({ environmentId: "env-named-0001" }, call)).toBe("env-named-0001");
+			expect(runtime.environmentId({}, { ...call, environmentId: "env-host-0001" })).toBe("env-host-0001");
+			expect(() => runtime.environmentId({}, call)).toThrow("binding is unusable");
+		} finally {
+			await runtime.dispose();
+			context.cleanup();
+		}
 	});
 });

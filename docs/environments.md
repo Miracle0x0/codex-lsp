@@ -18,6 +18,8 @@ Arguments after `launch` (an optional `--` first) go to `codex`. The launcher:
 2. starts `codex --no-daemon ...` with `CODEX_LSP_CONTEXT_ID` and `CODEX_LSP_ENV_MANIFEST` set;
 3. exits with Codex's exit code.
 
+If those two variables reach the MCP server malformed (an invalid id, or a manifest path that is not `<stateDir>/environments/<id>/manifest.json`), the server does not fall back to its own environment: every call that names no environment fails with `[environment_error]`, the edit hooks report that failure, and `lsp.status` shows `Environment: unusable`. Start Codex again with `codex-lsp launch`.
+
 The plugin's MCP server receives those two variables (they are forwarded in `.mcp.json`) and uses the snapshot for every call. `--no-daemon` matters: a shared Codex background server would keep the environment it started with.
 
 An alias saves typing:

@@ -45,13 +45,14 @@ function cliCommand(): CliCommand {
 
 async function serveMcp(): Promise<void> {
 	const binding = launchBinding(env);
-	for (const warning of binding.warnings) stderr.write(`codex-lsp: ${warning}\n`);
+	if (binding.problem !== undefined) stderr.write(`codex-lsp: ${binding.problem}\n`);
 	// The plugin process starts in the plugin directory, so there is no default workspace root:
 	// each call's workspace comes from Codex turn metadata, the hook's cwd, or explicit tool arguments.
 	const runtime = createLspRuntime({
 		config: configSourcesOf(env),
 		stateDir: binding.stateDir,
 		...(binding.environmentId === undefined ? {} : { defaultEnvironmentId: binding.environmentId }),
+		...(binding.problem === undefined ? {} : { defaultEnvironmentError: binding.problem }),
 	});
 	const baselines = new BaselineStore();
 	const feedback = new EditFeedback(runtime, baselines);

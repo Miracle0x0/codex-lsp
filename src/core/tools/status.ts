@@ -7,6 +7,7 @@ import type { ToolCallContext } from "../runtime/context.js";
 import { findProjectRoot } from "../runtime/router.js";
 import type { LspRuntime } from "../runtime/runtime.js";
 import { defineLspTool } from "./definition.js";
+import { ToolFailure } from "./failures.js";
 import { WorkspaceInputShape } from "./schemas.js";
 
 const ToolchainSchema = z.object({
@@ -22,6 +23,7 @@ const ToolchainSchema = z.object({
 const StatusOutputSchema = z.object({
 	workspaceRoot: z.string().nullable(),
 	configError: z.array(z.object({ file: z.string(), path: z.string(), message: z.string() })).optional(),
+	environmentError: z.string().optional(),
 	configFiles: z
 		.object({
 			user: z.object({ path: z.string(), loaded: z.boolean() }),
@@ -161,6 +163,7 @@ function summarize(status: StatusOutput): string {
 				(project ? `, project ${project.path} (${project.loaded ? "loaded" : "absent"})` : ""),
 		);
 	}
+	if (status.environmentError) lines.push(`Environment: unusable; ${status.environmentError}`);
 	if (status.environment) {
 		const environment = status.environment;
 		lines.push(
@@ -199,6 +202,17 @@ function summarize(status: StatusOutput): string {
 	return lines.join("\n");
 }
 
+function describeLanguages(config: EffectiveConfig): StatusOutput["languages"] {
+	return [...config.languages.values()].map((language) => ({
+		id: language.id,
+		extensions: [...language.extensions],
+		semanticServer: language.semanticServer,
+		diagnosticServers: [...language.diagnosticServers],
+		disabledServers: [...language.disabledServers],
+		toolchain: language.toolchain,
+	}));
+}
+
 export const statusTool = defineLspTool({
 	name: "status",
 	title: "LSP Status",
@@ -228,13 +242,30 @@ export const statusTool = defineLspTool({
 			};
 			return { summary: summarize(status), data: status, partial: true };
 		}
-		const environment = runtime.resolver.environment(config, runtime.environmentId(input, context));
+		const configFiles = {
+			user: { ...config.files.user },
+			project: config.files.project ? { ...config.files.project } : null,
+		};
+		let environmentId: string | undefined;
+		try {
+			environmentId = runtime.environmentId(input, context);
+		} catch (error) {
+			if (!(error instanceof ToolFailure && error.code === "environment_error")) throw error;
+			// Servers are looked up on the environment's PATH, so without one only the configuration is shown.
+			const status: StatusOutput = {
+				workspaceRoot,
+				configFiles,
+				environmentError: error.message,
+				servers: [],
+				languages: describeLanguages(config),
+				clients,
+			};
+			return { summary: summarize(status), data: status, partial: true };
+		}
+		const environment = runtime.resolver.environment(config, environmentId);
 		const status: StatusOutput = {
 			workspaceRoot,
-			configFiles: {
-				user: { ...config.files.user },
-				project: config.files.project ? { ...config.files.project } : null,
-			},
+			configFiles,
 			environment: {
 				environmentId: environment.environmentId,
 				generation: environment.generation,
@@ -243,14 +274,7 @@ export const statusTool = defineLspTool({
 				notes: [...environment.notes],
 			},
 			servers: describeServers(config, environment),
-			languages: [...config.languages.values()].map((language) => ({
-				id: language.id,
-				extensions: [...language.extensions],
-				semanticServer: language.semanticServer,
-				diagnosticServers: [...language.diagnosticServers],
-				disabledServers: [...language.disabledServers],
-				toolchain: language.toolchain,
-			})),
+			languages: describeLanguages(config),
 			...(input.filePath === undefined ? {} : { file: await describeFile(runtime, input.filePath, input, context) }),
 			clients,
 		};
