@@ -8,14 +8,11 @@ import type { ConfigSources } from "../../src/core/config/loader.js";
  * Variables a child process needs to start at all. Everything else a test's processes see is declared by
  * the test, so a developer's configuration, activated environments, or login state cannot change results.
  */
-const STARTUP_VARIABLES = [
+const STARTUP_VARIABLES = new Set([
 	"PATH",
-	"Path",
 	"PATHEXT",
-	"SystemRoot",
 	"SYSTEMROOT",
-	"SystemDrive",
-	"ComSpec",
+	"SYSTEMDRIVE",
 	"COMSPEC",
 	"WINDIR",
 	"TEMP",
@@ -23,7 +20,7 @@ const STARTUP_VARIABLES = [
 	"TMPDIR",
 	"LANG",
 	"LC_ALL",
-] as const;
+]);
 
 /**
  * Variables that select an environment, configuration, or toolchain. Suites that must use the machine's real
@@ -66,9 +63,9 @@ export function isolatedContext(prefix: string, extra: Readonly<Record<string, s
 	const stateDir = join(root, "state");
 	mkdirSync(home);
 	const env: Record<string, string> = {};
-	for (const name of STARTUP_VARIABLES) {
-		const value = process.env[name];
-		if (value !== undefined) env[name] = value;
+	// Matched case-insensitively and copied under the parent's own spelling (Windows has "Path", not "PATH").
+	for (const [name, value] of Object.entries(process.env)) {
+		if (value !== undefined && STARTUP_VARIABLES.has(name.toUpperCase())) env[name] = value;
 	}
 	Object.assign(env, {
 		HOME: home,

@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Layer the tests (default, platform, integration, contract, perf) with isolated fixtures: private home, state, and configuration for every scenario. Suites skip with the reason when their tools are missing and fail instead when `CODEX_LSP_REQUIRE_TOOLS=1` (CI). Conda cases create their own environments; the contract suite no longer needs `CODEX_LSP_CONTRACT=1`.
+- `dist/build-info.json` records the sources a build came from; tests rebuild and packaging refuses when it does not match.
+- Route every diagnostics check through one request; configuration file locations are passed in by the entry point instead of read from the global environment.
+- The CLI owns termination signals; shutdown no longer lingers five seconds, and language servers that fail to stop are reported.
+- Client waits release their listeners and timers on every outcome and fail at once when cancelled or the server exited before or during the wait.
 - Stop publishing to npm: remove the `publish` workflow and its registry token. The repository root is now a local marketplace (`.agents/plugins/marketplace.json`, `codex-lsp-local`) that lists the staged plugin.
 - Consolidate the Codex adapter and LSP runtime into one pnpm package: `src/codex/` and `src/core/`, with one executable, lockfile, build, and test configuration.
 - Package the core directly with production dependencies; include usage and design documentation, and verify the plugin outside the source tree without symlinks or a separately published runtime.

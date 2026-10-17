@@ -537,21 +537,25 @@ shell 集成将采集和去重集中到 Node 助手及快照存储层，每个�
 
 新增 [环境管理模块](src/codex/environment/manage.ts) 及 `env list`、`env remove <id>`。删除必须由明确命令触发，不根据年龄推断外部固定环境是否失效，也不在后台删除用户快照。测试只操作临时状态目录。
 
-[CI](.github/workflows/ci.yml) 增加真实语言服务器集成 job，并提供手动开启的 Codex 0.163.0 契约 job；后者需要测试账号认证 secret，缺少时明确失败。原有多系统、Node 版本矩阵继续承担跨平台检查。实际执行证据与尚未验证的宿主范围见下一节。
+[CI](.github/workflows/ci.yml) 默认安装各套件声明的全部工具并设置 `CODEX_LSP_REQUIRE_TOOLS=1`，缺少工具即失败而不是跳过。多系统、Node 版本矩阵运行默认套件和平台套件并校验插件制品；真实语言服务器按语言拆成独立 job，记录实际工具版本；手动开启的 Codex 0.163.0 契约 job 需要测试账号认证 secret，缺少时明确失败。实际执行证据与尚未验证的宿主范围见下一节。
 
 ## 12. 测试证据、打包与交付边界
 
 ### 12.1 测试分层
 
-| 层次 | 当前测试覆盖 | 验证范围 |
+| 层次（命令） | 当前测试覆盖 | 依赖与本机结果 |
 | --- | --- | --- |
-| 单元与 Codex 适配 | 配置、坐标、环境、进程、诊断、编辑、Hook 和单包布局 | 合并后 137 项通过；默认跳过真实 Codex 2 项及缺少 pwsh 的 1 项 |
-| 真实语言服务器集成 | Pyright、Ruff、TypeScript 6/7、gopls、clangd、rust-analyzer | 合并后 29 项通过，含 TypeScript 7 原生 LSP/编译器的 4 项测试 |
-| 制品检查 | 生产依赖安装、移出源树、连接 MCP 并列出工具 | 单包制品成功发现 14 个工具，不包含独立运行时包和开发 SDK |
-| 真实 Codex 契约 | 安装插件后验证 apply_patch、shell 和 venv 启动 | 整合后在隔离 CODEX_HOME 中验证最终制品，2/2 通过 |
+| 逻辑与组件（`pnpm test`） | 配置、坐标、环境、诊断、编辑、Hook、CLI/stdio、单包布局、测试隔离 | 只依赖 Node 与锁定的开发依赖；dist 与源码哈希不符时先重建。142 项通过，1 项仅适用于 Windows |
+| 平台（`test:platform`） | bash/zsh/pwsh 集成、文件监听、SIGTERM 关闭、进程树、launcher | 不适用于当前系统的场景按名称跳过；缺少 shell 时跳过并说明原因。Linux 本机 14 项通过，pwsh 未安装而跳过 |
+| 真实语言服务器（`test:integration`） | Pyright、Ruff、uv、Conda、TypeScript 6/7、gopls、clangd、rust-analyzer | Conda 场景自建临时环境，Rust 负例使用隔离的 RUSTUP_HOME。29 项通过，含 TypeScript 7 原生 LSP/编译器 4 项 |
+| 制品检查（`test:package`） | 生产依赖安装、移出源树、连接 MCP 并列出工具 | 只打包与当前源码一致的构建；发现 14 个工具 |
+| 真实 Codex 契约（`test:contract`） | 安装插件后验证 apply_patch、shell 和 venv 启动 | 独立配置，不在默认收集范围；本机 2/2 通过（另有一次运行中模型会话超时） |
+| 性能（`test:perf`） | 冷启动、热检查、不重发结果的服务器 | 只输出耗时，不作为通过条件 |
+
+需要外部工具的套件通过 [describeWithTools](test/support/tools.ts) 声明依赖：本机缺少时跳过并输出原因，CI 设置 `CODEX_LSP_REQUIRE_TOOLS=1` 后缺少即失败。测试夹具由 [isolatedContext](test/support/context.ts) 提供私有 home、状态目录和配置来源，子进程只继承启动所需的变量；使用真实工具链的套件改用去除环境选择变量（venv、Conda、`CODEX_LSP_*`、`NODE_OPTIONS` 等）的 `toolchainEnv()`。
 | 静态检查 | TypeScript 7、Biome、补丁空白、CI YAML 和文档引用 | 本机执行；远端工作流尚未触发 |
 
-[真实宿主测试](test/codex/codex-contract.test.ts) 使用临时 CODEX_HOME，安装 staged plugin，读取会话记录检查诊断反馈。它只有两个场景，且通过 `--dangerously-bypass-hook-trust` 绕过本次运行的 Hook 信任检查，因此并未覆盖交互式信任授权流程。主仓库通过手动 workflow_dispatch 输入 codex_contract 启用宿主契约测试，并通过 integration job 执行 TypeScript 6/7 等真实服务器测试。[CI](.github/workflows/ci.yml)
+[真实宿主测试](test/contract/codex.test.ts) 使用临时 CODEX_HOME，安装 staged plugin，读取会话记录检查诊断反馈。它只有两个场景，且通过 `--dangerously-bypass-hook-trust` 绕过本次运行的 Hook 信任检查，因此并未覆盖交互式信任授权流程。主仓库通过手动 workflow_dispatch 输入 codex_contract 启用宿主契约测试，并按语言拆分 integration job 执行 TypeScript 6/7 等真实服务器测试；同一 job 内构建一次，测试与打包复用该构建并校验源码哈希。[CI](.github/workflows/ci.yml)
 
 验证平台为 Linux、Node 24 和 Codex CLI 0.163.0。macOS、Windows、PowerShell、桌面宿主、部分工具链切换及大型项目性能仍需对应环境验证；CI 配置与本机执行结果分开记录。
 

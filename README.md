@@ -49,18 +49,19 @@ Codex calls the hook endpoints through native `mcp_tool` hooks, so checks reuse 
 pnpm install --frozen-lockfile
 pnpm run build
 pnpm run check
-pnpm run test
-pnpm run test:integration   # real Python, TypeScript 6/7, Go, C++, Rust servers
+pnpm run test               # logic and component tests (rebuilds dist/ when stale)
+pnpm run test:platform      # real shells, file watching, signals, process trees
+pnpm run test:integration   # real Python/Conda, TypeScript 6/7, Go, C++, Rust servers
 pnpm run test:package
 ```
 
 Development, CI, and plugin packaging use one root `package.json` and `pnpm-lock.yaml`. TypeScript 7 builds the plugin; real integration tests cover TypeScript 6 through typescript-language-server and TypeScript 7 through its native LSP/compiler. Both SDKs are development-only dependencies.
 
-`pnpm test` covers the hook endpoints end to end against `dist/cli.js` with a fake language server. The real-host contract runs Codex itself in a temporary `CODEX_HOME`, installs the staged plugin, and checks that diagnostics reach the session after `apply_patch` and a shell command (needs network, Codex auth, and Pyright):
+Suites that need tools you have not installed (a shell, a language server, Conda, Codex) are skipped with the reason; CI installs everything and sets `CODEX_LSP_REQUIRE_TOOLS=1` so nothing is skipped there. `pnpm test` covers the hook endpoints end to end against `dist/cli.js` with a fake language server. The real-host contract runs Codex itself in a temporary `CODEX_HOME`, installs the staged plugin, and checks that diagnostics reach the session after `apply_patch` and a shell command (needs network, Codex auth, and Pyright):
 
 ```bash
 pnpm run test:package
-CODEX_LSP_CONTRACT=1 pnpm run test:contract
+pnpm run test:contract
 ```
 
 ## Branch Rules and Releases
