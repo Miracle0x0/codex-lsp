@@ -1,4 +1,5 @@
-import { join } from "node:path";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
@@ -6,7 +7,7 @@ import { launchBinding } from "../../src/codex/environment/binding.js";
 import { createLspRuntime } from "../../src/core/index.js";
 import { isolatedContext } from "../support/context.js";
 
-const STATE = "/state/codex-lsp";
+const STATE = resolve(tmpdir(), "codex-lsp-binding");
 const ID = "env-launch-0001";
 
 describe("launch environment binding", () => {
