@@ -20,8 +20,8 @@ Codex plugin that ports the standalone LSP runtime from [`pi-lsp-client`](https:
 ```bash
 pnpm install --frozen-lockfile
 pnpm run test:package                     # stages artifacts/codex-lsp-plugin
-codex plugin marketplace add /path/to/marketplace   # a marketplace listing the staged plugin
-codex plugin add codex-lsp@<marketplace>
+codex plugin marketplace add "$PWD"       # this repository is the codex-lsp-local marketplace
+codex plugin add codex-lsp@codex-lsp-local
 ```
 
 Enable `[features] mcp_2026_07_28 = true` in `~/.codex/config.toml`, trust the plugin's hooks, and start Codex from the shell whose environment should be analyzed:
@@ -31,11 +31,11 @@ source .venv/bin/activate
 node artifacts/codex-lsp-plugin/dist/cli.js launch
 ```
 
-Details, including the marketplace layout, are in [Installation](docs/installation.md).
+Details, including updates and installing a copied plugin on another machine, are in [Installation](docs/installation.md).
 
 ## Architecture
 
-This repository owns one npm package with two internal layers:
+This repository is one pnpm package with two internal layers:
 
 - `src/core/` owns the MCP server, LSP processes, documents, diagnostics, workspace edits, configuration, and environment snapshots.
 - `src/codex/` owns Codex metadata, edit hooks, shell capture and integration, the launcher, and configuration output.
@@ -54,7 +54,7 @@ pnpm run test:integration   # real Python, TypeScript 6/7, Go, C++, Rust servers
 pnpm run test:package
 ```
 
-Development, CI, and release use one root `package.json` and `pnpm-lock.yaml`. TypeScript 7 builds the plugin; real integration tests cover TypeScript 6 through typescript-language-server and TypeScript 7 through its native LSP/compiler. Both SDKs are development-only dependencies.
+Development, CI, and plugin packaging use one root `package.json` and `pnpm-lock.yaml`. TypeScript 7 builds the plugin; real integration tests cover TypeScript 6 through typescript-language-server and TypeScript 7 through its native LSP/compiler. Both SDKs are development-only dependencies.
 
 `pnpm test` covers the hook endpoints end to end against `dist/cli.js` with a fake language server. The real-host contract runs Codex itself in a temporary `CODEX_HOME`, installs the staged plugin, and checks that diagnostics reach the session after `apply_patch` and a shell command (needs network, Codex auth, and Pyright):
 
@@ -67,8 +67,8 @@ CODEX_LSP_CONTRACT=1 pnpm run test:contract
 
 - `main` is protected by `.github/branch-ruleset.json`.
 - CI runs Node 20, 22, and 24 on Ubuntu, macOS, and Windows.
-- Releases are GitHub Releases tagged as `v<semver>`.
-- Publishing runs from the `publish` workflow after a GitHub Release is published.
+- Releases are GitHub Releases tagged as `v<semver>`; the version in `package.json` and `.codex-plugin/plugin.json` must match.
+- The package is not published to npm. Users build the plugin from source and install it from the repository's local marketplace (see [Installation](docs/installation.md)).
 
 ## Privacy
 

@@ -2,7 +2,8 @@
 
 ## Unreleased
 
-- Consolidate the Codex adapter and LSP runtime into one pnpm package: `src/codex/` and `src/core/`, with one executable, lockfile, build, test configuration, and release pipeline.
+- Stop publishing to npm: remove the `publish` workflow and its registry token. The repository root is now a local marketplace (`.agents/plugins/marketplace.json`, `codex-lsp-local`) that lists the staged plugin.
+- Consolidate the Codex adapter and LSP runtime into one pnpm package: `src/codex/` and `src/core/`, with one executable, lockfile, build, and test configuration.
 - Package the core directly with production dependencies; include usage and design documentation, and verify the plugin outside the source tree without symlinks or a separately published runtime.
 - Build with TypeScript 7 and run real TypeScript 6 and TypeScript 7 native LSP/compiler tests, alongside Pyright, Ruff, gopls, clangd, and rust-analyzer.
 - Preserve complete edit/rename diagnostic baselines, retain old baselines for unconfirmed results, and recheck every open related file.

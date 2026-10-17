@@ -22,7 +22,7 @@
 
 ### 2.1 在单包中保留宿主适配与运行时边界
 
-项目采用单仓库、单 npm 包：`src/codex/` 处理 Codex 特有的生命周期、调用上下文和环境交接，`src/core/` 处理语言服务器协议、进程、文档、诊断和工作区编辑。两层通过本地 ESM 导入连接，由根入口组合；核心层不导入 Codex 适配层。依赖、锁文件、TypeScript 编译器、测试和发布均由根包统一管理。
+项目采用单仓库、单 pnpm 包：`src/codex/` 处理 Codex 特有的生命周期、调用上下文和环境交接，`src/core/` 处理语言服务器协议、进程、文档、诊断和工作区编辑。两层通过本地 ESM 导入连接，由根入口组合；核心层不导入 Codex 适配层。依赖、锁文件、TypeScript 编译器、测试和插件制品均由根包统一管理。
 
 统一入口 [src/cli.ts](src/cli.ts) 的 `serveMcp()` 创建一个 `LspRuntime`，把标准工具、重命名结果记录器及两个 Hook 端点组合后交给 stdio 服务：
 
@@ -582,7 +582,7 @@ shell 集成将采集和去重集中到 Node 助手及快照存储层，每个�
            MCP tools/list check
 ```
 
-生产制品不包含语言服务器或 TypeScript 开发 SDK。TypeScript 7 是编译器及原生 LSP 测试依赖，`typescript6` 别名只为 TypeScript 6 的真实测试提供明确 SDK；二者不会进入生产依赖。根发布流程只发布当前包，不再要求先发布单独的运行时。[发布工作流](.github/workflows/publish.yml)
+生产制品不包含语言服务器或 TypeScript 开发 SDK。TypeScript 7 是编译器及原生 LSP 测试依赖，`typescript6` 别名只为 TypeScript 6 的真实测试提供明确 SDK；二者不会进入生产依赖。项目不向 npm registry 发布；交付物是上述完整插件制品，仓库根目录的 [.agents/plugins/marketplace.json](.agents/plugins/marketplace.json) 把它登记为本地 marketplace `codex-lsp-local`，安装和分发步骤见 [安装指南](docs/installation.md)。
 
 ### 12.3 TypeScript 7 真实验证
 

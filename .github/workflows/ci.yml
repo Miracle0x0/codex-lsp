@@ -61,7 +61,7 @@ jobs:
       - name: Plugin package
         run: pnpm run test:package
 
-      - name: npm package smoke
+      - name: Package file list
         run: pnpm pack --dry-run
 
   integration:

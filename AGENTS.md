@@ -20,7 +20,7 @@ Conventions for humans and agents working on this repository.
 - `pnpm run check` runs typecheck and Biome.
 - `pnpm test` runs the core and Codex adapter suites once.
 - `pnpm run test:integration` runs real Pyright, Ruff, TypeScript 6 via typescript-language-server, TypeScript 7 native LSP/compiler, gopls, clangd, and rust-analyzer. Required servers must be present; TypeScript SDKs are pinned dev dependencies.
-- `pnpm run test:package` builds and stages a self-contained plugin, installs its production dependencies with pnpm (hoisted, no symlinks), and starts it outside the source tree.
+- `pnpm run test:package` builds and stages a self-contained plugin, installs its production dependencies with pnpm (hoisted, no symlinks), and starts it outside the source tree. `.agents/plugins/marketplace.json` lists that staged directory as the local marketplace `codex-lsp-local`; the package is not published to npm.
 - `CODEX_LSP_CONTRACT=1 pnpm run test:contract` drives real Codex in a temporary `CODEX_HOME` (needs network and Codex auth; run `test:package` first, set `CODEX_LSP_CONTRACT_KEEP=1` to keep the files).
 
 ## Source Layout

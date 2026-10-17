@@ -26,8 +26,6 @@ An alias saves typing:
 alias cx='node /path/to/codex-lsp/dist/cli.js launch'
 ```
 
-If the package is installed from npm, the command is `codex-lsp launch`.
-
 ## Shell integration
 
 The shell integration keeps a snapshot of an interactive shell current while you work. Add one line to your shell's startup file:

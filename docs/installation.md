@@ -29,46 +29,53 @@ pnpm run test:package
 
 ## Install into Codex
 
-1. Create a local marketplace directory that lists the staged plugin:
-
-   ```text
-   my-marketplace/
-   ├── .agents/plugins/marketplace.json
-   └── plugins/codex-lsp/        <- copy of artifacts/codex-lsp-plugin/
-   ```
-
-   `marketplace.json`:
-
-   ```json
-   {
-   	"name": "local",
-   	"plugins": [
-   		{
-   			"name": "codex-lsp",
-   			"source": { "source": "local", "path": "./plugins/codex-lsp" },
-   			"policy": { "installation": "AVAILABLE", "authentication": "ON_INSTALL" }
-   		}
-   	]
-   }
-   ```
-
-2. Register the marketplace and install the plugin. Listing a plugin as enabled in `config.toml` is not enough; it must be installed:
+1. Register this repository as a local marketplace and install the plugin. The repository's [`.agents/plugins/marketplace.json`](../.agents/plugins/marketplace.json) is named `codex-lsp-local` and lists the staged `./artifacts/codex-lsp-plugin` (paths are relative to the repository root, not to `.agents/plugins/`). Listing a plugin as enabled in `config.toml` is not enough; it must be installed:
 
    ```bash
-   codex plugin marketplace add /path/to/my-marketplace
-   codex plugin add codex-lsp@local
+   cd /path/to/codex-lsp
+   codex plugin marketplace add "$PWD"
+   codex plugin add codex-lsp@codex-lsp-local
    ```
 
-3. Enable the protocol revision in `~/.codex/config.toml`:
+   Codex copies the staged directory into its plugin cache, so run `test:package` before `plugin add`. Codex does not pick up this marketplace by opening the repository; only `marketplace add` registers it.
+
+2. Enable the protocol revision in `~/.codex/config.toml` (add the key to an existing `[features]` table):
 
    ```toml
    [features]
    mcp_2026_07_28 = true
    ```
 
-4. Start Codex and trust the plugin's hooks. Codex runs hooks only with persisted hook trust; until then the tools work but edits are not checked automatically. For unattended runs that already vet the hook source, `codex exec --dangerously-bypass-hook-trust` skips the check for that one invocation.
+3. Start Codex and trust the plugin's hooks. Codex runs hooks only with persisted hook trust; until then the tools work but edits are not checked automatically. For unattended runs that already vet the hook source, `codex exec --dangerously-bypass-hook-trust` skips the check for that one invocation.
 
-To update, rebuild with `pnpm run test:package`, replace `plugins/codex-lsp/` in the marketplace, and run `codex plugin add codex-lsp@local` again. `codex plugin remove codex-lsp@local` uninstalls it.
+To update, run `pnpm run test:package` and `codex plugin add codex-lsp@codex-lsp-local` again, then start a new session; the installed copy does not follow the artifact directory by itself. Review hook trust again if the hooks changed. `codex plugin remove codex-lsp@codex-lsp-local` uninstalls it; it removes Codex's copy, not the repository, the staged artifact, or environment snapshots.
+
+### Installing on another machine
+
+codex-lsp is not published to npm. To install without building, copy the whole `artifacts/codex-lsp-plugin/` directory (or an archive of it that keeps hidden files such as `.codex-plugin/` and `.mcp.json`, and the production `node_modules/`) into a marketplace directory of your own:
+
+```text
+my-marketplace/
+├── .agents/plugins/marketplace.json
+└── plugins/codex-lsp/        <- copy of artifacts/codex-lsp-plugin/
+```
+
+`marketplace.json`:
+
+```json
+{
+	"name": "local",
+	"plugins": [
+		{
+			"name": "codex-lsp",
+			"source": { "source": "local", "path": "./plugins/codex-lsp" },
+			"policy": { "installation": "AVAILABLE", "authentication": "ON_INSTALL" }
+		}
+	]
+}
+```
+
+Then run `codex plugin marketplace add /path/to/my-marketplace` and `codex plugin add codex-lsp@local`. To update, replace `plugins/codex-lsp/` completely and run `plugin add` again. The receiving machine still needs Node.js and its own language servers. A plain source archive is not installable; it must be built first.
 
 ## Check that it works
 
