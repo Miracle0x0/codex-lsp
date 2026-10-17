@@ -12,6 +12,8 @@ const FAKE_SERVER = join(REPO_ROOT, "test", "core", "fixtures", "fake-lsp-server
 
 export interface StdioSession {
 	readonly client: Client;
+	/** Process id of the CLI serving this session. */
+	readonly pid: number | null;
 	/** Real path of a fresh temporary workspace. */
 	readonly workspace: string;
 	write(path: string, content: string): string;
@@ -38,22 +40,24 @@ export async function startCli(extraEnv: Record<string, string> = {}): Promise<S
 		}),
 	);
 	const client = new Client({ name: "codex-lsp-test", version: "0.0.0" }, { versionNegotiation: { mode: "auto" } });
-	await client.connect(
-		new StdioClientTransport({
-			command: process.execPath,
-			args: [CLI_PATH, "mcp"],
-			cwd: REPO_ROOT,
-			env: {
-				PATH: process.env["PATH"] ?? "",
-				HOME: process.env["HOME"] ?? "",
-				LSP_TOOLS_MCP_PROJECT_CONFIG: configPath,
-				LSP_TOOLS_MCP_USER_CONFIG: join(workspace, "no-user-config.json"),
-				...extraEnv,
-			},
-		}),
-	);
+	const transport = new StdioClientTransport({
+		command: process.execPath,
+		args: [CLI_PATH, "mcp"],
+		cwd: REPO_ROOT,
+		env: {
+			PATH: process.env["PATH"] ?? "",
+			HOME: process.env["HOME"] ?? "",
+			LSP_TOOLS_MCP_PROJECT_CONFIG: configPath,
+			LSP_TOOLS_MCP_USER_CONFIG: join(workspace, "no-user-config.json"),
+			...extraEnv,
+		},
+	});
+	await client.connect(transport);
 	return {
 		client,
+		get pid() {
+			return transport.pid;
+		},
 		workspace,
 		write(path, content) {
 			const full = join(workspace, path);

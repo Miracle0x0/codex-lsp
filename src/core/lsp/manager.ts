@@ -2,7 +2,6 @@ import { reportBestEffortCleanupError } from "./cleanup-errors.js";
 import { LspClient, type ServerTarget } from "./client.js";
 import { IDLE_TIMEOUT_MS, INIT_TIMEOUT_MS, REAPER_INTERVAL_MS } from "./constants.js";
 import { isLspDeadConnectionError } from "./errors.js";
-import { installProcessSignalCleanup } from "./process-signal-cleanup.js";
 
 interface ManagedClient {
 	readonly client: LspClient;
@@ -69,11 +68,13 @@ function awaitWithSignal<T>(promise: Promise<T>, signal: AbortSignal | undefined
 	});
 }
 
-/** Owns every language server process; tools borrow clients through `withClient`. */
+/**
+ * Owns every language server process; tools borrow clients through `withClient`. Process exit is the
+ * entry point's concern: it calls `stopAll` (through `LspRuntime.dispose`) on shutdown.
+ */
 export class LspManager {
 	private readonly clients = new Map<string, ManagedClient>();
 	private reaperHandle: NodeJS.Timeout | null = null;
-	private signalDisposer: (() => void) | null = null;
 	private disposed = false;
 	private readonly idleTimeoutMs: number;
 	private readonly initTimeoutMs: number;
@@ -87,7 +88,6 @@ export class LspManager {
 		this.now = options.now ?? (() => Date.now());
 		this.reaperHandle = setInterval(() => this.reapStale(), options.reaperIntervalMs ?? REAPER_INTERVAL_MS);
 		this.reaperHandle.unref();
-		this.signalDisposer = installProcessSignalCleanup(() => this.stopAll());
 	}
 
 	private reapStale(): void {
@@ -255,8 +255,6 @@ export class LspManager {
 			clearInterval(this.reaperHandle);
 			this.reaperHandle = null;
 		}
-		this.signalDisposer?.();
-		this.signalDisposer = null;
 		const clients = [...this.clients.values()].map((managed) => managed.client);
 		this.clients.clear();
 		await Promise.allSettled(clients.map(stopBestEffort));

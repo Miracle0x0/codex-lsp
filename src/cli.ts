@@ -61,13 +61,31 @@ async function serveMcp(): Promise<void> {
 		postEditDiagnosticsTool(feedback),
 	];
 	const handle = serveLspStdio(runtime, { tools, resolveContext: resolveCodexContext });
-	const shutdown = async (): Promise<void> => {
-		await handle.close();
-		await runtime.dispose();
+	shutdownOnExit(async () => {
+		try {
+			await handle.close();
+		} finally {
+			await runtime.dispose();
+		}
+	});
+}
+
+const TERMINATION_SIGNALS: readonly NodeJS.Signals[] =
+	process.platform === "win32" ? ["SIGINT", "SIGTERM", "SIGBREAK"] : ["SIGINT", "SIGTERM"];
+
+/** The CLI owns process exit: stdin EOF and every termination signal wait for the same shutdown. */
+function shutdownOnExit(close: () => Promise<void>): void {
+	let closing = false;
+	const shutdown = (): void => {
+		if (closing) return;
+		closing = true;
+		close().catch((error: unknown) => {
+			stderr.write(`codex-lsp: shutdown failed: ${error instanceof Error ? error.message : String(error)}\n`);
+			process.exitCode = 1;
+		});
 	};
-	process.stdin.once("end", () => void shutdown());
-	process.once("SIGINT", () => void shutdown());
-	process.once("SIGTERM", () => void shutdown());
+	process.stdin.once("end", shutdown);
+	for (const signal of TERMINATION_SIGNALS) process.once(signal, shutdown);
 }
 
 function option(args: readonly string[], name: string): string | undefined {
