@@ -13,6 +13,7 @@ Codex plugin that ports the standalone LSP runtime from [`pi-lsp-client`](https:
 | [Post-edit diagnostics](docs/post-edit-diagnostics.md) | what the hooks check after `apply_patch` and shell commands, and what Codex is told |
 | [Tools](docs/tools.md) | every `lsp.*` tool with parameters, results, and error codes |
 | [Configuration](docs/configuration.md) | config files, adding and replacing servers, multi-source diagnostics, built-in routes |
+| [Adding language servers](docs/adding-language-servers.md) | supporting a new server: configuration steps, or a built-in route with toolchain, tests, CI, and docs |
 | [Troubleshooting](docs/troubleshooting.md) | missing tools, silent hooks, wrong environments, slow or incomplete results |
 
 ## Quick Start

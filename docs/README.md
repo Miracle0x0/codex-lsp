@@ -9,6 +9,7 @@ Usage guides for the codex-lsp Codex plugin. For development and release workflo
 | [Post-edit diagnostics](post-edit-diagnostics.md) | understand the feedback Codex gets after `apply_patch` and shell commands |
 | [Tools](tools.md) | call the `lsp.*` MCP tools directly, with their parameters and results |
 | [Configuration](configuration.md) | add, replace, or disable language servers and tune diagnostics |
+| [Adding language servers](adding-language-servers.md) | support another language server, through configuration or as a built-in route |
 | [Troubleshooting](troubleshooting.md) | fix missing tools, silent hooks, unbound environments, and server failures |
 
 Conventions used throughout:
