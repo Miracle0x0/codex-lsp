@@ -141,4 +141,20 @@ describe("LspManager", () => {
 		expect({ int: process.listenerCount("SIGINT"), term: process.listenerCount("SIGTERM") }).toEqual(before);
 		await manager.stopAll();
 	});
+
+	it("#given one client fails to stop #when stopping all #then the others still stop and the failure is reported", async () => {
+		// given
+		let index = 0;
+		const { manager, clients } = setupManager(() => ({ failStop: index++ === 0 }));
+		manager.release(await manager.acquire(makeTarget("broken")));
+		manager.release(await manager.acquire(makeTarget("healthy")));
+
+		// when
+		const stopping = manager.stopAll();
+
+		// then
+		await expect(stopping).rejects.toThrow("broken: fake stop failed");
+		expect(clients.map((client) => client.stopCallCount)).toEqual([1, 1]);
+		expect(manager.clientCount()).toBe(0);
+	});
 });

@@ -249,6 +249,7 @@ export class LspManager {
 		});
 	}
 
+	/** Stops every client; rejects after all were attempted when any failed to stop. */
 	async stopAll(): Promise<void> {
 		this.disposed = true;
 		if (this.reaperHandle) {
@@ -257,6 +258,15 @@ export class LspManager {
 		}
 		const clients = [...this.clients.values()].map((managed) => managed.client);
 		this.clients.clear();
-		await Promise.allSettled(clients.map(stopBestEffort));
+		// Every client gets its stop attempt; failures are reported together afterwards.
+		const results = await Promise.allSettled(clients.map((client) => client.stop()));
+		const failures = results.flatMap((result, index) =>
+			result.status === "rejected"
+				? [
+						`${clients[index]?.target.server.id ?? "?"}: ${result.reason instanceof Error ? result.reason.message : String(result.reason)}`,
+					]
+				: [],
+		);
+		if (failures.length > 0) throw new Error(`Failed to stop language servers:\n  ${failures.join("\n  ")}`);
 	}
 }

@@ -316,7 +316,9 @@ key: stableHash({
 
 ### 6.3 生命周期与取消
 
-`LspManager` 共享初始化 Promise，并用 `refCount`、`pendingWaiters` 避免在调用仍在使用或等待时做空闲回收。默认空闲回收阈值为五分钟。MCP 请求的取消信号进入工具上下文，LSP 请求通过 `CancellationTokenSource` 转为协议取消；进程退出会主动使在途请求失败。[manager.ts](src/core/lsp/manager.ts)、[client.ts](src/core/lsp/client.ts)
+`LspManager` 共享初始化 Promise，并用 `refCount`、`pendingWaiters` 避免在调用仍在使用或等待时做空闲回收。默认空闲回收阈值为五分钟。MCP 请求的取消信号进入工具上下文，LSP 请求通过 `CancellationTokenSource` 转为协议取消；进程退出会主动使在途请求失败。客户端的请求、忙闲等待和诊断发布等待共用一个内部等待实现：无论以事件、失败、超时、取消还是进程退出结束，都会移除自己注册的监听器和定时器；等待开始前已经取消或进程已经退出时立即失败，发布等待期间服务器退出也按退出报告，而不是等到超时。[manager.ts](src/core/lsp/manager.ts)、[client.ts](src/core/lsp/client.ts)
+
+进程退出由 [CLI](src/cli.ts) 统一接入：stdin 结束、SIGINT、SIGTERM（Windows 另有 SIGBREAK）进入同一次关闭流程，先关闭 MCP 服务，再由 `LspRuntime.dispose()` 关闭文件日志并调用 `LspManager.stopAll()`。管理器不注册进程信号。`stopAll()` 对每个客户端都尝试停止，之后汇总失败并拒绝，CLI 将其写到 stderr 并以非零状态退出；空闲回收、旧实例退役等后台停止仍为尽力而为，仅在 `CODEX_LSP_DEBUG_CLEANUP=1` 时输出。
 
 ```text
  no client --acquire--> initializing --initialize--> ready

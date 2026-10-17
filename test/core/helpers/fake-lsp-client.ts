@@ -5,6 +5,7 @@ import { LspClient, type ServerTarget } from "../../../src/core/lsp/client.js";
 export interface FakeLspClientOptions {
 	readonly startDelayMs?: number;
 	readonly failStart?: boolean;
+	readonly failStop?: boolean;
 }
 
 /** LspClient without a process: start/stop are recorded so manager policies can be tested. */
@@ -42,6 +43,7 @@ export class FakeLspClient extends LspClient {
 		this.stopCallCount += 1;
 		this.alive = false;
 		this.state = "stopped";
+		if (this.options.failStop) throw new Error("fake stop failed");
 	}
 }
 
