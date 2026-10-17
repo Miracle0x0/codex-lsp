@@ -1,49 +1,36 @@
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 
-import { afterEach, beforeAll, describe, expect, it } from "vitest";
+import { parse } from "smol-toml";
+import { afterEach, describe, expect, it } from "vitest";
 
+import { type IsolatedContext, isolatedContext } from "../support/context.js";
+import { CLI_PATH } from "../support/repo.js";
 import { placeholder } from "./helpers/placeholder.js";
-import { REPO_ROOT, requireBuiltCli } from "./helpers/stdio.js";
 
-const CLI = join(REPO_ROOT, "dist", "cli.js");
-const roots: string[] = [];
-const hasTomllib = spawnSync("python3", ["-c", "import tomllib"]).status === 0;
-
-beforeAll(requireBuiltCli);
+const contexts: IsolatedContext[] = [];
 
 afterEach(() => {
-	for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
+	for (const context of contexts.splice(0)) context.cleanup();
 });
 
-function parseToml(text: string): Record<string, unknown> {
-	const result = spawnSync(
-		"python3",
-		["-I", "-c", "import json,sys,tomllib; print(json.dumps(tomllib.loads(sys.stdin.read())))"],
-		{
-			input: text,
-			encoding: "utf8",
-		},
-	);
-	if (result.status !== 0) throw new Error(result.stderr);
-	return JSON.parse(result.stdout) as Record<string, unknown>;
+function configMcp(...args: string[]) {
+	const context = isolatedContext("codex-lsp-config");
+	contexts.push(context);
+	return spawnSync(process.execPath, [CLI_PATH, "config", "mcp", ...args], { env: context.env, encoding: "utf8" });
 }
 
-describe.runIf(hasTomllib)("codex-lsp config mcp", () => {
+describe("codex-lsp config mcp", () => {
 	it("#given no pinned environment #when printing config #then it is valid TOML with the server, protocol, and both hooks", () => {
 		// when
-		const result = spawnSync(process.execPath, [CLI, "config", "mcp"], { encoding: "utf8" });
+		const result = configMcp();
 
 		// then
 		expect(result.status).toBe(0);
-		const config = parseToml(result.stdout);
-		expect(config).toMatchObject({
+		expect(parse(result.stdout)).toMatchObject({
 			features: { mcp_2026_07_28: true },
 			mcp_servers: {
 				lsp: {
-					args: [CLI, "mcp"],
+					args: [CLI_PATH, "mcp"],
 					env: { CODEX_MCP_PROTOCOL_VERSION: "2026-07-28" },
 					env_vars: ["CODEX_LSP_CONTEXT_ID", "CODEX_LSP_ENV_MANIFEST"],
 				},
@@ -58,15 +45,8 @@ describe.runIf(hasTomllib)("codex-lsp config mcp", () => {
 	});
 
 	it("#given an environment that was never captured #when pinning it #then the command refuses", () => {
-		// given
-		const stateDir = mkdtempSync(join(tmpdir(), "codex-lsp-config-"));
-		roots.push(stateDir);
-
 		// when
-		const result = spawnSync(process.execPath, [CLI, "config", "mcp", "--environment-id", "env-missing-01"], {
-			env: { ...process.env, CODEX_LSP_STATE_DIR: stateDir },
-			encoding: "utf8",
-		});
+		const result = configMcp("--environment-id", "env-missing-01");
 
 		// then
 		expect(result.status).toBe(2);

@@ -1,13 +1,11 @@
 import { renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
-import { afterEach, beforeAll, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 
-import { requireBuiltCli, type StdioSession, startCli, textOf } from "./helpers/stdio.js";
+import { type StdioSession, startCli, textOf } from "./helpers/stdio.js";
 
 const sessions: StdioSession[] = [];
-
-beforeAll(requireBuiltCli);
 
 afterEach(async () => {
 	for (const session of sessions.splice(0)) await session.close();

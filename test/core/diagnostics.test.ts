@@ -128,18 +128,18 @@ describe("multi-source diagnostics", () => {
 		expect(batch.complete).toBe(false);
 	});
 
-	it("#given an unchanged file #when checking twice #then the confirmed snapshot is reused without waiting", async () => {
+	it("#given an unchanged file #when checking twice #then the confirmed snapshot is reused without asking the server again", async () => {
 		// given
 		const h = await harness();
 		h.writeFile("a.fake", "ERROR\n");
 		await diagnose(h, { filePath: "a.fake" });
+		const sentBefore = h.readLog().length;
 
 		// when
-		const started = Date.now();
 		const { batch } = await diagnose(h, { filePath: "a.fake", timeoutMs: 10_000 });
 
 		// then
-		expect(Date.now() - started).toBeLessThan(1_000);
+		expect(h.readLog().slice(sentBefore)).toEqual([]);
 		expect(batch.files[0]?.freshness).toBe("confirmed");
 		expect(batch.counts.error).toBe(1);
 	});
@@ -159,28 +159,28 @@ describe("multi-source diagnostics", () => {
 		expect(batch.files[0]).toMatchObject({ documentVersion: 2, freshness: "confirmed" });
 	});
 
-	it("#given a server that skips republishing unchanged results #when edits keep the diagnostics #then only the first edit waits", async () => {
+	it("#given a server that skips republishing unchanged results #when edits keep the diagnostics #then the client learns to reopen right away", async () => {
 		// given
 		const h = await harness({ skipUnchanged: true, clearOnClose: true });
 		h.writeFile("a.fake", "ERROR one\n");
 		await diagnose(h, { filePath: "a.fake" });
+		const reopens = (): number => h.readLog().filter((entry) => entry.method === "textDocument/didClose").length;
+		const client = h.runtime.manager.activeClients()[0];
+		expect(client?.skipsUnchangedRepublish).toBe(false);
 
 		// when
 		h.writeFile("a.fake", "ERROR one\n\n");
-		const firstStart = performance.now();
 		const first = await diagnose(h, { filePath: "a.fake" });
-		const firstMs = performance.now() - firstStart;
+		const afterFirst = { reopens: reopens(), learned: client?.skipsUnchangedRepublish };
 		h.writeFile("a.fake", "ERROR one\n\n\n");
-		const secondStart = performance.now();
 		const second = await diagnose(h, { filePath: "a.fake" });
-		const secondMs = performance.now() - secondStart;
 
 		// then
 		expect(first.batch.counts.error).toBe(1);
+		expect(afterFirst).toEqual({ reopens: 1, learned: true });
 		expect(second.batch.counts.error).toBe(1);
 		expect(second.batch.files[0]?.freshness).toBe("confirmed");
-		expect(firstMs).toBeGreaterThanOrEqual(1_400);
-		expect(secondMs).toBeLessThan(1_000);
+		expect(reopens()).toBe(2);
 	});
 
 	it("#given a server that clears diagnostics on close #when a reopen nudge follows an edit that adds a problem #then the new problem is reported", async () => {

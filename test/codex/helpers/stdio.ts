@@ -1,14 +1,13 @@
-import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { fileURLToPath } from "node:url";
 
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 
-export const REPO_ROOT = fileURLToPath(new URL("../../..", import.meta.url));
-const CLI_PATH = join(REPO_ROOT, "dist", "cli.js");
-const FAKE_SERVER = join(REPO_ROOT, "test", "core", "fixtures", "fake-lsp-server.mjs");
+import { isolatedContext } from "../../support/context.js";
+import { CLI_PATH, REPO_ROOT, repoPath } from "../../support/repo.js";
+
+const FAKE_SERVER = repoPath("test", "core", "fixtures", "fake-lsp-server.mjs");
 
 export interface StdioSession {
 	readonly client: Client;
@@ -22,13 +21,13 @@ export interface StdioSession {
 	close(): Promise<void>;
 }
 
-export function requireBuiltCli(): void {
-	if (!existsSync(CLI_PATH)) throw new Error(`${CLI_PATH} is missing; run pnpm run build first`);
-}
-
-/** Starts dist/cli.js like Codex does (cwd = plugin directory) with a fake `.fake` language server. */
+/**
+ * Starts dist/cli.js like Codex does (cwd = plugin directory) with a fake `.fake` language server. The CLI sees
+ * only an isolated environment: a private home and state directory and the test's own configuration files.
+ */
 export async function startCli(extraEnv: Record<string, string> = {}): Promise<StdioSession> {
-	const workspace = realpathSync(mkdtempSync(join(tmpdir(), "codex-lsp-test-")));
+	const context = isolatedContext("codex-lsp-test");
+	const workspace = context.root;
 	const configPath = join(workspace, "lsp-client.json");
 	const logPath = join(workspace, "fake-lsp.log");
 	writeFileSync(
@@ -44,13 +43,7 @@ export async function startCli(extraEnv: Record<string, string> = {}): Promise<S
 		command: process.execPath,
 		args: [CLI_PATH, "mcp"],
 		cwd: REPO_ROOT,
-		env: {
-			PATH: process.env["PATH"] ?? "",
-			HOME: process.env["HOME"] ?? "",
-			LSP_TOOLS_MCP_PROJECT_CONFIG: configPath,
-			LSP_TOOLS_MCP_USER_CONFIG: join(workspace, "no-user-config.json"),
-			...extraEnv,
-		},
+		env: { ...context.env, LSP_TOOLS_MCP_PROJECT_CONFIG: configPath, ...extraEnv },
 	});
 	await client.connect(transport);
 	return {
@@ -73,7 +66,7 @@ export async function startCli(extraEnv: Record<string, string> = {}): Promise<S
 		},
 		async close() {
 			await client.close();
-			rmSync(workspace, { recursive: true, force: true });
+			context.cleanup();
 		},
 	};
 }

@@ -1,21 +1,16 @@
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { existsSync } from "node:fs";
 import { join } from "node:path";
 
 import { expect, it } from "vitest";
 
-import { REPO_ROOT } from "./helpers/stdio.js";
+import { isolatedContext } from "../support/context.js";
+import { CLI_PATH } from "../support/repo.js";
 
 it("#given two captured environments #when one is explicitly removed #then listing and disk agree and the other survives", () => {
-	const stateDir = mkdtempSync(join(tmpdir(), "lsp-env-management-"));
-	const cli = join(REPO_ROOT, "dist", "cli.js");
-	const { CODEX_LSP_CONTEXT_ID: _id, CODEX_LSP_ENV_MANIFEST: _manifest, ...base } = process.env;
+	const context = isolatedContext("lsp-env-management");
 	const run = (...args: string[]) =>
-		spawnSync(process.execPath, [cli, "env", ...args], {
-			env: { ...base, CODEX_LSP_STATE_DIR: stateDir },
-			encoding: "utf8",
-		});
+		spawnSync(process.execPath, [CLI_PATH, "env", ...args], { env: context.env, encoding: "utf8" });
 	try {
 		const first = run("capture").stdout.trim();
 		const second = run("capture").stdout.trim();
@@ -28,11 +23,11 @@ it("#given two captured environments #when one is explicitly removed #then listi
 			]),
 		);
 		expect(run("remove", first).status).toBe(0);
-		expect(existsSync(join(stateDir, "environments", first))).toBe(false);
-		expect(existsSync(join(stateDir, "environments", second))).toBe(true);
+		expect(existsSync(join(context.stateDir, "environments", first))).toBe(false);
+		expect(existsSync(join(context.stateDir, "environments", second))).toBe(true);
 		expect(run("remove", "../../invalid").status).not.toBe(0);
 		expect(run("remove", first).status).not.toBe(0);
 	} finally {
-		rmSync(stateDir, { recursive: true, force: true });
+		context.cleanup();
 	}
 });

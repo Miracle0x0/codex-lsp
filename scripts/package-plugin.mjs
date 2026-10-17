@@ -18,6 +18,8 @@ import { fileURLToPath } from "node:url";
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 
+import { builtHash, sourceHash } from "./source-hash.mjs";
+
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const requiredFiles = [
 	".codex-plugin/plugin.json",
@@ -28,6 +30,7 @@ const requiredFiles = [
 	"shell/codex-lsp.zsh",
 	"shell/codex-lsp.ps1",
 	"dist/cli.js",
+	"dist/build-info.json",
 	"dist/core/index.js",
 	"dist/codex/context.js",
 	"docs/README.md",
@@ -59,12 +62,11 @@ function fail(message) {
 	process.exit(1);
 }
 
+/** Packages only a build of exactly the current sources; `dist/` merely existing is not enough. */
 function requireBuild() {
-	const builtEntries = [join(repoRoot, "dist", "cli.js"), join(repoRoot, "dist", "core", "index.js")];
-	const missing = builtEntries.filter((entry) => !existsSync(entry));
-	if (missing.length > 0) {
-		fail(`missing build output (${missing.map((entry) => relative(repoRoot, entry)).join(", ")}); run pnpm run build first`);
-	}
+	const built = builtHash(repoRoot);
+	if (built === undefined) fail("no build output; run pnpm run build first");
+	if (built !== sourceHash(repoRoot)) fail("dist/ was built from other sources; run pnpm run build first");
 }
 
 function stage(out) {

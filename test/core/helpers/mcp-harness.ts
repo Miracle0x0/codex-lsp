@@ -1,5 +1,4 @@
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -9,6 +8,7 @@ import { createMcpHandler } from "@modelcontextprotocol/server";
 import { PROJECT_CONFIG_ENV } from "../../../src/core/config/loader.js";
 import { createLspServerFactory, type LspServerFactoryOptions } from "../../../src/core/mcp/server.js";
 import { createLspRuntime, type LspRuntime } from "../../../src/core/runtime/runtime.js";
+import { isolatedContext } from "../../support/context.js";
 
 export const FAKE_SERVER_PATH = fileURLToPath(new URL("../fixtures/fake-lsp-server.mjs", import.meta.url));
 
@@ -69,7 +69,8 @@ export async function createMcpHarness(
 	behavior: FakeLspBehavior = {},
 	options: HarnessOptions = {},
 ): Promise<McpHarness> {
-	const workspace = mkdtempSync(join(tmpdir(), "lsp-tools-mcp-test-"));
+	const context = isolatedContext("lsp-tools-mcp-test");
+	const workspace = context.root;
 	const logPath = join(workspace, "fake-lsp.log");
 	const configPath = join(workspace, "lsp-client.json");
 	const extra = options.extraServers ?? {};
@@ -89,7 +90,8 @@ export async function createMcpHarness(
 	const defaultWorkspaceRoot =
 		options.defaultWorkspaceRoot === null ? undefined : (options.defaultWorkspaceRoot ?? workspace);
 	const runtime = createLspRuntime({
-		config: { env: { [PROJECT_CONFIG_ENV]: configPath }, homeDir: workspace },
+		config: { env: { [PROJECT_CONFIG_ENV]: configPath }, homeDir: context.home },
+		processEnv: context.env,
 		...(defaultWorkspaceRoot === undefined ? {} : { defaultWorkspaceRoot }),
 		...(options.stateDir === undefined ? {} : { stateDir: options.stateDir }),
 		...(options.defaultEnvironmentId === undefined ? {} : { defaultEnvironmentId: options.defaultEnvironmentId }),
@@ -131,7 +133,7 @@ export async function createMcpHarness(
 			await client.close();
 			await handler.close();
 			await runtime.dispose();
-			rmSync(workspace, { recursive: true, force: true });
+			context.cleanup();
 		},
 	};
 }

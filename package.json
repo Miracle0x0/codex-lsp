@@ -43,12 +43,14 @@
 		"test": "vitest --run",
 		"test:watch": "vitest",
 		"typecheck": "node node_modules/typescript/bin/tsc --noEmit",
-		"lint": "biome check src test vitest.config.ts vitest.integration.config.ts",
-		"lint:fix": "biome check --write src test vitest.config.ts vitest.integration.config.ts",
+		"lint": "biome check src test scripts vitest.config.ts vitest.platform.config.ts vitest.integration.config.ts vitest.contract.config.ts vitest.perf.config.ts",
+		"lint:fix": "biome check --write src test scripts vitest.config.ts vitest.platform.config.ts vitest.integration.config.ts vitest.contract.config.ts vitest.perf.config.ts",
 		"check": "pnpm run typecheck && pnpm run lint",
+		"test:platform": "vitest --run --config vitest.platform.config.ts",
 		"test:integration": "vitest --run --config vitest.integration.config.ts",
 		"test:package": "pnpm run build && node scripts/package-plugin.mjs --verify",
-		"test:contract": "vitest --run test/codex/codex-contract.test.ts"
+		"test:contract": "vitest --run --config vitest.contract.config.ts",
+		"test:perf": "vitest --run --config vitest.perf.config.ts"
 	},
 	"dependencies": {
 		"@modelcontextprotocol/server": "2.3.1",
@@ -60,9 +62,10 @@
 		"@biomejs/biome": "2.5.5",
 		"@modelcontextprotocol/client": "2.3.1",
 		"@types/node": "^25.7.0",
+		"smol-toml": "1.9.1",
 		"typescript": "7.0.2",
-		"vitest": "^4.1.5",
-		"typescript6": "npm:typescript@6.0.3"
+		"typescript6": "npm:typescript@6.0.3",
+		"vitest": "^4.1.5"
 	},
 	"engines": {
 		"node": ">=20.0.0"
