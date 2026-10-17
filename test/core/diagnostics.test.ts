@@ -113,6 +113,37 @@ describe("multi-source diagnostics", () => {
 		expect(batch.diagnostics.map((diagnostic) => diagnostic.providerId)).toEqual(["fake"]);
 	});
 
+	it("#given a pull server that cancels once and allows a retrigger #when checking #then the pull is sent again and confirmed", async () => {
+		// given
+		const h = await harness({ diagnosticMode: "pull", cancelPulls: { times: 1, retrigger: true } });
+		h.writeFile("a.fake", "ERROR\n");
+
+		// when
+		const { batch } = await diagnose(h, { filePath: "a.fake" });
+
+		// then
+		expect(h.readLog().filter((entry) => entry.method === "textDocument/diagnostic")).toHaveLength(2);
+		expect(batch.files[0]?.freshness).toBe("confirmed");
+		expect(batch.counts.error).toBe(1);
+	});
+
+	it("#given a pull server that cancels and asks not to retrigger #when checking #then the pull is not repeated and the result is unconfirmed", async () => {
+		// given
+		const h = await harness({ diagnosticMode: "pull", cancelPulls: { times: 1, retrigger: false } });
+		h.writeFile("a.fake", "ERROR\n");
+
+		// when
+		const { batch, isError } = await diagnose(h, { filePath: "a.fake" });
+
+		// then
+		expect(h.readLog().filter((entry) => entry.method === "textDocument/diagnostic")).toHaveLength(1);
+		expect(isError).toBe(false);
+		expect(batch.providers[0]?.status).toBe("ok");
+		expect(batch.files[0]?.freshness).toBe("unconfirmed");
+		expect(batch.complete).toBe(false);
+		expect(batch.incompleteReasons.join("\n")).toContain("asked not to retry");
+	});
+
 	it("#given a push server that never publishes #when checking #then the provider times out instead of reporting no diagnostics", async () => {
 		// given
 		const h = await harness({ diagnosticMode: "none" });

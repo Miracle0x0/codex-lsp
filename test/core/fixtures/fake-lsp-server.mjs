@@ -12,6 +12,8 @@
 //   requestDelays          { [method]: ms } delay before answering a request (cancellable)
 //   exitOnRequest          method name that makes the process exit with code 3
 //   exitOnNotification     notification method that makes the process exit with code 3 instead of handling it
+//   cancelPulls            { times, retrigger }: answer the first `times` textDocument/diagnostic requests with
+//                          ServerCancelled (-32802) and DiagnosticServerCancellationData { retriggerRequest }
 //   renameEdit             WorkspaceEdit returned by textDocument/rename; "$NEW" becomes newName, "$ROOT" the root URI
 //   publishOnce            publish at most once per document (a server that never refreshes)
 //   skipUnchanged          on didChange, do not republish diagnostics equal to the last ones (like tsserver)
@@ -143,6 +145,7 @@ connection.onNotification("exit", () => {
 });
 
 let loading = false;
+let cancelledPulls = 0;
 let progressTokens = 0;
 
 async function progress(title, durationMs) {
@@ -218,6 +221,10 @@ connection.onNotification((method, params) => {
 connection.onRequest("textDocument/diagnostic", (params) => {
 	log({ kind: "request", method: "textDocument/diagnostic", params });
 	maybeExit("textDocument/diagnostic");
+	if (behavior.cancelPulls && cancelledPulls < behavior.cancelPulls.times) {
+		cancelledPulls += 1;
+		throw new ResponseError(-32802, "server cancelled", { retriggerRequest: behavior.cancelPulls.retrigger });
+	}
 	const document = documents.get(params.textDocument.uri);
 	if (loading) return { kind: "full", resultId: "loading", items: [] };
 	return { kind: "full", resultId: `r${document?.version ?? 0}`, items: diagnosticsFor(document?.text ?? "") };

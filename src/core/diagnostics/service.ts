@@ -56,8 +56,14 @@ const STATUS_BY_FAILURE: Partial<Record<ToolFailureCode, ProviderStatus>> = {
 
 const SERVER_CANCELLED = -32802;
 
-function isServerCancelled(error: unknown): boolean {
+function isServerCancelled(error: unknown): error is Error & { readonly data?: unknown } {
 	return error instanceof Error && "code" in error && error.code === SERVER_CANCELLED;
+}
+
+/** LSP DiagnosticServerCancellationData: `retriggerRequest: false` asks the client not to send the pull again. */
+function forbidsRetrigger(error: { readonly data?: unknown }): boolean {
+	const { data } = error;
+	return typeof data === "object" && data !== null && "retriggerRequest" in data && data.retriggerRequest === false;
 }
 
 interface Collected {
@@ -158,12 +164,11 @@ export class DiagnosticService {
 		}
 	}
 
-	private async pull(
-		client: LspClient,
-		uri: string,
-		signal: AbortSignal,
-		retried = false,
-	): Promise<{ diagnostics: readonly Diagnostic[]; freshness: Freshness }> {
+	/**
+	 * Pulls a document's diagnostics. A server that cancels the pull is asked once more, unless it said not to
+	 * retrigger; then the last known result is kept and reported as unconfirmed.
+	 */
+	private async pull(client: LspClient, uri: string, signal: AbortSignal, retried = false): Promise<Collected> {
 		const previous = client.pullCache.get(uri);
 		let report: DocumentDiagnosticReport;
 		try {
@@ -173,7 +178,15 @@ export class DiagnosticService {
 				signal,
 			);
 		} catch (error) {
-			if (!retried && isServerCancelled(error)) return this.pull(client, uri, signal, true);
+			if (!isServerCancelled(error)) throw error;
+			if (forbidsRetrigger(error)) {
+				return {
+					diagnostics: previous?.diagnostics ?? [],
+					freshness: "unconfirmed",
+					unconfirmedReason: `${client.target.server.id} cancelled the diagnostics request for ${uri} and asked not to retry it`,
+				};
+			}
+			if (!retried) return this.pull(client, uri, signal, true);
 			throw error;
 		}
 		const diagnostics = report.kind === "unchanged" ? (previous?.diagnostics ?? []) : report.items;
@@ -221,16 +234,11 @@ export class DiagnosticService {
 			...pulled.diagnostics,
 			...fresh.filter((diagnostic) => !seen.has(diagnosticKey(diagnostic))),
 		];
-		return busyReason === undefined
-			? { diagnostics, freshness: pulled.freshness }
-			: { diagnostics, freshness: "unconfirmed", unconfirmedReason: busyReason };
+		if (busyReason !== undefined) return { diagnostics, freshness: "unconfirmed", unconfirmedReason: busyReason };
+		return { ...pulled, diagnostics };
 	}
 
-	private async push(
-		client: LspClient,
-		document: OpenDocument,
-		options: DiagnosticRunOptions,
-	): Promise<{ diagnostics: readonly Diagnostic[]; freshness: Freshness }> {
+	private async push(client: LspClient, document: OpenDocument, options: DiagnosticRunOptions): Promise<Collected> {
 		const { uri } = document;
 		const freshnessOf = (published: PublishedDiagnostics): Freshness =>
 			published.version === null ? "observed" : "confirmed";

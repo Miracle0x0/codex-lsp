@@ -505,7 +505,7 @@ apply(edit: WorkspaceEdit, origin: LspClient): Promise<WorkspaceEditReport> {
 
 ### 11.1 诊断正确性与可见性
 
-删除了 `neverIdle` 永久状态。每次 pull 检查重新判断工作区是否空闲；等待超时则继续标为 unconfirmed，后续加载结束可以恢复正常结果。Hook 与 rename 发出的诊断请求不设输出条数限制，显式 `diagnostics` 工具的展示限制仍由参数控制，因此 Hook 和 rename 的基线不会受 1,000/200 条截断影响。
+删除了 `neverIdle` 永久状态。每次 pull 检查重新判断工作区是否空闲；等待超时则继续标为 unconfirmed，后续加载结束可以恢复正常结果。服务器以 ServerCancelled（-32802）取消 pull 时，若取消数据声明 `retriggerRequest: false`，不再重发请求，保留上次已知结果并标为 unconfirmed；未声明或允许重发时重发一次，再次取消则按失败报告。Hook 与 rename 发出的诊断请求不设输出条数限制，显式 `diagnostics` 工具的展示限制仍由参数控制，因此 Hook 和 rename 的基线不会受 1,000/200 条截断影响。
 
 [编辑反馈](src/codex/hook/edit-feedback.ts) 复查当前工作区全部已打开相关文件，移除了十文件上限。监听不完整、日志已关闭或缺少 PreToolUse 记录时，即使零个文件变化也返回 `additionalContext`；不再提前去重并丢弃告警。未确认结果不更新基线，不产生 resolved 结论。
 

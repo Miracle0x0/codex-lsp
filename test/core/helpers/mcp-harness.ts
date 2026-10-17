@@ -21,6 +21,7 @@ export interface FakeLspBehavior {
 	readonly requestDelays?: Record<string, number>;
 	readonly exitOnRequest?: string;
 	readonly exitOnNotification?: string;
+	readonly cancelPulls?: { readonly times: number; readonly retrigger: boolean };
 	readonly messageEnv?: string;
 	readonly publishOnce?: boolean;
 	readonly skipUnchanged?: boolean;
