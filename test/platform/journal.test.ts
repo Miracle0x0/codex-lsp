@@ -138,10 +138,13 @@ describe("FileChangeJournal", () => {
 		const mark = journal.mark();
 
 		// when
-		for (let index = 0; index < 6; index += 1) writeFileSync(join(root, `f${index}.txt`), "x");
-		const window = await collectUntil(journal, mark, (current) =>
-			current.incompleteReasons.some((reason) => reason.includes("dropped")),
-		);
+		for (let index = 0; index < 6; index += 1) {
+			const path = join(root, `f${index}.txt`);
+			writeFileSync(path, "x");
+			const observed = await collectUntil(journal, mark, (current) => touched(current, path));
+			expect(observed.changes).toContainEqual({ path, kind: "created" });
+		}
+		const window = await journal.collect(mark);
 
 		// then
 		expect(window.incompleteReasons.join("\n")).toContain("dropped");

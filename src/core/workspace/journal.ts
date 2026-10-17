@@ -1,5 +1,5 @@
-import { type FSWatcher, lstatSync, readdirSync, watch } from "node:fs";
-import { join, sep } from "node:path";
+import { type BigIntStats, type FSWatcher, lstatSync, readdirSync, watch } from "node:fs";
+import { basename, join, sep } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 
 import type { FileChange } from "../documents/store.js";
@@ -29,12 +29,17 @@ interface JournalEvent {
 	readonly path: string;
 }
 
-function statOf(path: string): ReturnType<typeof lstatSync> | undefined {
+function statOf(path: string): BigIntStats | undefined {
 	try {
-		return lstatSync(path);
+		return lstatSync(path, { bigint: true });
 	} catch {
 		return undefined;
 	}
+}
+
+/** Identity and write metadata; nanosecond timestamps retain changes within the same millisecond. */
+function fileStamp(stat: BigIntStats): string {
+	return `${stat.dev}:${stat.ino}:${stat.size}:${stat.mtimeNs}:${stat.ctimeNs}`;
 }
 
 /**
@@ -44,7 +49,7 @@ function statOf(path: string): ReturnType<typeof lstatSync> | undefined {
  */
 export class FileChangeJournal {
 	private readonly watchers = new Map<string, FSWatcher>();
-	private readonly files = new Set<string>();
+	private readonly files = new Map<string, string>();
 	private readonly events: JournalEvent[] = [];
 	private readonly isExcluded: (path: string) => boolean;
 	private readonly maxDirectories: number;
@@ -71,7 +76,7 @@ export class FileChangeJournal {
 
 	/** Position to pass to `collect` later; changes after it belong to the window. */
 	mark(): JournalMark {
-		return { seq: this.seq, files: new Set(this.files) };
+		return { seq: this.seq, files: new Set(this.files.keys()) };
 	}
 
 	/** Files created, changed, or deleted after `mark`, classified by their state now. */
@@ -144,7 +149,7 @@ export class FileChangeJournal {
 				if (stat.isDirectory()) {
 					if (!this.isExcluded(path)) pending.push(path);
 				} else if (stat.isFile()) {
-					this.files.add(path);
+					this.files.set(path, fileStamp(stat));
 					if (recordFiles) this.record(path);
 				}
 			}
@@ -175,7 +180,14 @@ export class FileChangeJournal {
 			this.problem(`a change in ${directory} was reported without a file name`);
 			return;
 		}
-		const path = join(directory, name.toString());
+		const filename = name.toString();
+		// macOS also reports a watched directory's own removal using its basename.
+		// A real child with that name is still handled normally while the parent exists.
+		if (filename === basename(directory) && statOf(directory) === undefined) {
+			this.removeTree(directory);
+			return;
+		}
+		const path = join(directory, filename);
 		const stat = statOf(path);
 		if (stat?.isDirectory()) {
 			if (!this.isExcluded(path)) this.watchTree(path, true);
@@ -183,23 +195,30 @@ export class FileChangeJournal {
 		}
 		if (stat?.isSymbolicLink()) return;
 		if (stat === undefined) {
-			this.unwatchTree(path);
-			for (const known of this.files) {
-				if (known === path || known.startsWith(`${path}${sep}`)) {
-					this.files.delete(known);
-					if (known !== path) this.record(known);
-				}
-			}
-		} else if (stat.isFile()) this.files.add(path);
-		this.record(path);
+			this.removeTree(path);
+		} else if (stat.isFile()) {
+			const stamp = fileStamp(stat);
+			// Delayed startup events and duplicate notifications do not represent a new file state.
+			if (this.files.get(path) === stamp) return;
+			this.files.set(path, stamp);
+			this.record(path);
+		}
 	}
 
-	private unwatchTree(path: string): void {
+	/** Only files we observed can be deleted; a directory-self event can name no actual child. */
+	private removeTree(path: string): void {
 		for (const [directory, watcher] of this.watchers) {
 			if (directory === path || directory.startsWith(`${path}${sep}`)) {
 				watcher.close();
 				this.watchers.delete(directory);
 			}
 		}
+		for (const known of this.files.keys()) {
+			if (known === path || known.startsWith(`${path}${sep}`)) {
+				this.files.delete(known);
+				this.record(known);
+			}
+		}
+		if (path === this.root) this.close();
 	}
 }

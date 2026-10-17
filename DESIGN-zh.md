@@ -434,7 +434,7 @@ push 路径用文档同步序号、工作区变化序号及可选的文档版本
  compare baseline --> additionalContext JSON
 ```
 
-[FileChangeJournal](src/core/workspace/journal.ts) 从工作区根递归建立逐目录 watcher，排除依赖和构建目录，并在新目录出现时继续建立监听。collect 等待 100 ms 接收排队事件，然后按窗口内事件与当前磁盘状态分类。它观察的是时间窗口中的文件系统变化，无法证明每项变化一定由对应 shell 命令造成；并行命令或其他进程写入可能进入同一窗口。
+[FileChangeJournal](src/core/workspace/journal.ts) 从工作区根递归建立逐目录 watcher，排除依赖和构建目录，并在新目录出现时继续建立监听。初始扫描和后续通知记录文件的设备、inode、大小及纳秒级 mtime/ctime，状态未变的延迟或重复通知不形成新事件；删除只报告曾观察到的文件，目录自身通知不会被误认为同名子文件的删除。collect 等待 100 ms 接收排队事件，然后按窗口内事件与当前磁盘状态分类。它观察的是时间窗口中的文件系统变化，无法证明每项变化一定由对应 shell 命令造成；并行命令或其他进程写入可能进入同一窗口。
 
 ### 9.2 基线比较
 

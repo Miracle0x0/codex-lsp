@@ -14,7 +14,7 @@ After Codex edits files, the plugin checks them with the language servers that a
 How the changed files are found:
 
 - `apply_patch`: from the patch headers (`Add File`, `Update File`, `Delete File`, `Update File` + `Move to`). A patch Codex reports as failed (`Exit code` other than 0) is ignored.
-- `Bash`: Codex does not report what a command wrote, so the plugin keeps a file-change journal of the workspace. The pre-hook records the event position and known files, so atomically replacing an existing file is treated as a change. Dependency and build directories (`.git`, `node_modules`, `.venv`, `dist`, `build`, `target`, and others, plus `diagnostics.exclude`) are not watched. The journal stops at 4096 watched directories and reports incomplete coverage on every affected check, even with no recorded changes. Missing pre-hook records and closed journals are also reported.
+- `Bash`: Codex does not report what a command wrote, so the plugin keeps a file-change journal of the workspace. The pre-hook records the event position and known files, so atomically replacing an existing file is treated as a change. Delayed or duplicate notifications for unchanged files do not count as new edits, and directory notifications do not create deletion reports for files that were never observed. Dependency and build directories (`.git`, `node_modules`, `.venv`, `dist`, `build`, `target`, and others, plus `diagnostics.exclude`) are not watched. The journal stops at 4096 watched directories and reports incomplete coverage on every affected check, even with no recorded changes. Missing pre-hook records and closed journals are also reported.
 
 ## What is reported
 
