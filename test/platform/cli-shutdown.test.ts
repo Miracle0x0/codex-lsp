@@ -8,12 +8,12 @@ const sessions: StdioSession[] = [];
 afterEach(async () => {
 	for (const session of sessions.splice(0)) {
 		const cliPid = session.pid;
-		const serverPid = session.fakeLog().find((entry) => entry.method === "initialize")?.pid;
+		const pids = loggedPids(session);
 		try {
 			await session.client.close();
 		} finally {
 			// A failing regression test must not leave its deliberately stubborn processes behind.
-			if (serverPid !== undefined) kill(-serverPid);
+			for (const pid of pids) kill(pid);
 			if (cliPid !== null) kill(cliPid);
 			await session.close();
 		}
@@ -58,6 +58,17 @@ function serverPid(session: StdioSession, method = "initialize"): number {
 	return pid;
 }
 
+function loggedPids(session: StdioSession): number[] {
+	return [...new Set(session.fakeLog().flatMap((entry) => (entry.pid === undefined ? [] : [entry.pid])))];
+}
+
+async function expectStopped(session: StdioSession): Promise<void> {
+	const pids = loggedPids(session);
+	expect(pids.length).toBeGreaterThan(0);
+	// Check each real process independently; Darwin group probes can deny zombie-only groups.
+	await waitUntil(() => pids.every((pid) => !alive(pid)), 2_000);
+}
+
 function cliPid(session: StdioSession): number {
 	if (session.pid === null) throw new Error("CLI has no PID");
 	return session.pid;
@@ -89,7 +100,6 @@ describe.skipIf(process.platform === "win32")("CLI process shutdown (POSIX signa
 			// given
 			const session = await start();
 			const owner = cliPid(session);
-			const server = serverPid(session);
 
 			// when
 			process.kill(owner, signal);
@@ -97,21 +107,19 @@ describe.skipIf(process.platform === "win32")("CLI process shutdown (POSIX signa
 
 			// then
 			expect(session.fakeLog().map((entry) => entry.method)).toContain("shutdown");
-			expect(alive(-server)).toBe(false);
+			await expectStopped(session);
 		},
 	);
 
 	it("#given a slow uncooperative LSP #when MCP stdin closes #then the entire group stops before the host kills the CLI", async () => {
 		const session = await start({ shutdownDelayMs: 6_000, ignoreTerm: true });
-		const server = serverPid(session);
 		await session.client.close();
-		expect(alive(-server)).toBe(false);
+		await expectStopped(session);
 	});
 
 	it("#given a host with a two-second shutdown grace #when TERM is repeated during cleanup #then cleanup finishes before host escalation", async () => {
 		const session = await start({ shutdownDelayMs: 6_000, ignoreTerm: true });
 		const owner = cliPid(session);
-		const server = serverPid(session);
 		let escalated = false;
 		const deadline = setTimeout(() => {
 			if (alive(owner)) {
@@ -125,7 +133,7 @@ describe.skipIf(process.platform === "win32")("CLI process shutdown (POSIX signa
 			process.kill(owner, "SIGTERM");
 			await waitUntil(() => !alive(owner), 2_500);
 			expect(escalated).toBe(false);
-			expect(alive(-server)).toBe(false);
+			await expectStopped(session);
 		} finally {
 			clearTimeout(deadline);
 		}
@@ -139,15 +147,14 @@ describe.skipIf(process.platform === "win32")("CLI process shutdown (POSIX signa
 			serverPid(session, "worker");
 			await waitUntil(() => !alive(server), 1_000);
 			await session.client.close();
-			expect(alive(-server)).toBe(false);
+			await expectStopped(session);
 		},
 	);
 
 	it("#given a worker ignoring TERM #when its LSP leader exits during shutdown #then the worker is killed too", async () => {
 		const session = await start({ worker: true, workerIgnoreTerm: true });
-		const server = serverPid(session);
 		await session.client.close();
-		expect(alive(-server)).toBe(false);
+		await expectStopped(session);
 	});
 
 	it("#given a worker holding the pipes #when its LSP leader exits #then its group is reaped without waiting for MCP shutdown", async () => {
@@ -157,8 +164,7 @@ describe.skipIf(process.platform === "win32")("CLI process shutdown (POSIX signa
 			workerInheritPipes: true,
 			exitAfterDefinition: true,
 		});
-		const server = serverPid(session);
-		await waitUntil(() => !alive(-server), 2_000);
+		await expectStopped(session);
 		expect((await session.client.listTools()).tools.length).toBeGreaterThan(0);
 	});
 
@@ -169,9 +175,8 @@ describe.skipIf(process.platform === "win32")("CLI process shutdown (POSIX signa
 			() => "disconnected",
 		);
 		await waitUntil(() => session.fakeLog().some((entry) => entry.method === "initialize"), 2_000);
-		const server = serverPid(session);
 		await session.client.close();
 		await pending;
-		expect(alive(-server)).toBe(false);
+		await expectStopped(session);
 	});
 });

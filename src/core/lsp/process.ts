@@ -30,9 +30,9 @@ export interface PreparedSpawnCommand {
 	shell: false;
 }
 
-function isMissingProcessError(error: unknown): boolean {
+function hasErrorCode(error: unknown, code: string | number): boolean {
 	if (!(error instanceof Error) || !("code" in error)) return false;
-	return error.code === "ESRCH";
+	return error.code === code;
 }
 
 export function validateCwd(cwd: string): { valid: boolean; error?: string } {
@@ -88,20 +88,30 @@ function wrap(proc: ChildProcess): SpawnedProcess {
 	};
 }
 
-/** ESRCH means the group is gone; every other signal failure must reach the caller. */
-function signalGroup(pid: number, signal: NodeJS.Signals | 0): boolean {
+/** Darwin also returns EPERM for groups containing only zombies; verify members before accepting it. */
+async function signalGroup(pid: number, signal: NodeJS.Signals | 0): Promise<boolean> {
 	try {
 		process.kill(-pid, signal);
 		return true;
 	} catch (error) {
-		if (isMissingProcessError(error)) return false;
+		if (hasErrorCode(error, "ESRCH")) return false;
+		if (process.platform === "darwin" && hasErrorCode(error, "EPERM")) {
+			const { stdout } = await promisify(execFile)("/bin/ps", ["-axo", "pgid=,stat="], {
+				timeout: STOP_KILL_TIMEOUT_MS,
+			});
+			const hasLiveMember = stdout.split("\n").some((line) => {
+				const [group, state] = line.trim().split(/\s+/);
+				return Number(group) === pid && !state?.startsWith("Z");
+			});
+			if (!hasLiveMember) return false;
+		}
 		throw error;
 	}
 }
 
-async function waitForExit(alive: () => boolean, timeoutMs: number): Promise<boolean> {
+async function waitForExit(alive: () => boolean | Promise<boolean>, timeoutMs: number): Promise<boolean> {
 	const deadline = Date.now() + timeoutMs;
-	while (alive()) {
+	while (await alive()) {
 		const remaining = deadline - Date.now();
 		if (remaining <= 0) return false;
 		await delay(Math.min(20, remaining));
@@ -115,19 +125,31 @@ async function terminateProcessTree(proc: ChildProcess): Promise<void> {
 	try {
 		if (process.platform === "win32") {
 			if (proc.exitCode !== null || proc.signalCode !== null) return;
-			await promisify(execFile)("taskkill", ["/pid", String(pid), "/f", "/t"], {
-				windowsHide: true,
-				timeout: STOP_TERM_TIMEOUT_MS,
-				killSignal: "SIGKILL",
-			});
+			try {
+				await promisify(execFile)("taskkill", ["/pid", String(pid), "/f", "/t"], {
+					windowsHide: true,
+					timeout: STOP_TERM_TIMEOUT_MS,
+					killSignal: "SIGKILL",
+				});
+			} catch (error) {
+				// taskkill can lose the race before Node observes the child's exit event.
+				if (!hasErrorCode(error, 128)) throw error;
+				try {
+					process.kill(pid, 0);
+				} catch (probeError) {
+					if (hasErrorCode(probeError, "ESRCH")) return;
+					throw probeError;
+				}
+				throw error;
+			}
 			if (!(await waitForExit(() => proc.exitCode === null && proc.signalCode === null, STOP_KILL_TIMEOUT_MS))) {
 				throw new Error(`Language server process ${pid} is still running after taskkill`);
 			}
 			return;
 		}
-		if (!signalGroup(pid, "SIGTERM")) return;
+		if (!(await signalGroup(pid, "SIGTERM"))) return;
 		if (await waitForExit(() => signalGroup(pid, 0), STOP_TERM_TIMEOUT_MS)) return;
-		signalGroup(pid, "SIGKILL");
+		await signalGroup(pid, "SIGKILL");
 		if (!(await waitForExit(() => signalGroup(pid, 0), STOP_KILL_TIMEOUT_MS))) {
 			throw new Error(`Language server process group ${pid} is still present after SIGKILL`);
 		}
