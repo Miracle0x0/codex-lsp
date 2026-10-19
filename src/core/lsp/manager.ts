@@ -41,14 +41,6 @@ export interface LspManagerOptions {
 	readonly now?: () => number;
 }
 
-async function stopBestEffort(client: LspClient): Promise<void> {
-	try {
-		await client.stop();
-	} catch (error) {
-		reportBestEffortCleanupError("client stop", error);
-	}
-}
-
 function awaitWithSignal<T>(promise: Promise<T>, signal: AbortSignal | undefined): Promise<T> {
 	if (!signal) return promise;
 	return new Promise<T>((resolve, reject) => {
@@ -77,6 +69,8 @@ function awaitWithSignal<T>(promise: Promise<T>, signal: AbortSignal | undefined
  */
 export class LspManager {
 	private readonly clients = new Map<string, ManagedClient>();
+	private readonly stopping = new Map<LspClient, Promise<void>>();
+	private stopAllPromise: Promise<void> | undefined;
 	private reaperHandle: NodeJS.Timeout | null = null;
 	private disposed = false;
 	private readonly idleTimeoutMs: number;
@@ -93,6 +87,19 @@ export class LspManager {
 		this.reaperHandle.unref();
 	}
 
+	/** Retain pending and failed stops after their client leaves the reusable pool. */
+	private stop(client: LspClient): Promise<void> {
+		const existing = this.stopping.get(client);
+		if (existing) return existing;
+		const stopping = client.stop();
+		this.stopping.set(client, stopping);
+		void stopping.then(
+			() => this.stopping.delete(client),
+			(error: unknown) => reportBestEffortCleanupError(`stop ${client.target.server.id}`, error),
+		);
+		return stopping;
+	}
+
 	private reapStale(): void {
 		const now = this.now();
 		for (const [key, managed] of this.clients) {
@@ -104,7 +111,7 @@ export class LspManager {
 				now - managed.lastUsedAt > this.idleTimeoutMs;
 			if (initExpired || idle) {
 				this.clients.delete(key);
-				void stopBestEffort(managed.client);
+				void this.stop(managed.client);
 			}
 		}
 	}
@@ -115,7 +122,7 @@ export class LspManager {
 			managed.retired = true;
 			if (managed.refCount === 0 && managed.pendingWaiters === 0) {
 				this.clients.delete(key);
-				void stopBestEffort(managed.client);
+				void this.stop(managed.client);
 			}
 		}
 	}
@@ -133,9 +140,10 @@ export class LspManager {
 					existing.pendingWaiters -= 1;
 				}
 			}
+			if (this.disposed) throw new Error("LspManager has been disposed");
 			if (!existing.client.isAlive()) {
 				if (this.clients.get(target.key) === existing) this.clients.delete(target.key);
-				await stopBestEffort(existing.client);
+				await this.stop(existing.client);
 				return this.acquire(target, signal);
 			}
 			existing.refCount += 1;
@@ -158,10 +166,11 @@ export class LspManager {
 		this.clients.set(target.key, managed);
 		try {
 			await awaitWithSignal(managed.initPromise, signal);
+			if (this.disposed) throw new Error("LspManager has been disposed");
 		} catch (error) {
 			managed.pendingWaiters -= 1;
 			if (this.clients.get(target.key) === managed) this.clients.delete(target.key);
-			await stopBestEffort(client);
+			await this.stop(client);
 			throw error;
 		}
 		managed.pendingWaiters -= 1;
@@ -179,7 +188,7 @@ export class LspManager {
 		managed.lastUsedAt = this.now();
 		if (managed.retired && managed.refCount === 0 && managed.pendingWaiters === 0) {
 			this.clients.delete(client.target.key);
-			void stopBestEffort(client);
+			void this.stop(client);
 		}
 	}
 
@@ -187,7 +196,7 @@ export class LspManager {
 		const managed = this.clients.get(client.target.key);
 		if (!managed || managed.client !== client) return;
 		this.clients.delete(client.target.key);
-		void stopBestEffort(client);
+		void this.stop(client);
 	}
 
 	/**
@@ -255,23 +264,30 @@ export class LspManager {
 	}
 
 	/** Stops every client; rejects after all were attempted when any failed to stop. */
-	async stopAll(): Promise<void> {
+	stopAll(): Promise<void> {
+		this.stopAllPromise ??= this.stopAllClients();
+		return this.stopAllPromise;
+	}
+
+	private async stopAllClients(): Promise<void> {
 		this.disposed = true;
 		if (this.reaperHandle) {
 			clearInterval(this.reaperHandle);
 			this.reaperHandle = null;
 		}
-		const clients = [...this.clients.values()].map((managed) => managed.client);
+		for (const { client } of this.clients.values()) void this.stop(client);
 		this.clients.clear();
-		// Every client gets its stop attempt; failures are reported together afterwards.
-		const results = await Promise.allSettled(clients.map((client) => client.stop()));
+		const stops = [...this.stopping];
+		// Includes clients already being retired, invalidated, or reaped before shutdown began.
+		const results = await Promise.allSettled(stops.map(([, stopping]) => stopping));
 		const failures = results.flatMap((result, index) =>
 			result.status === "rejected"
 				? [
-						`${clients[index]?.target.server.id ?? "?"}: ${result.reason instanceof Error ? result.reason.message : String(result.reason)}`,
+						`${stops[index]?.[0].target.server.id ?? "?"}: ${result.reason instanceof Error ? result.reason.message : String(result.reason)}`,
 					]
 				: [],
 		);
+		this.stopping.clear();
 		if (failures.length > 0) throw new Error(`Failed to stop language servers:\n  ${failures.join("\n  ")}`);
 	}
 }

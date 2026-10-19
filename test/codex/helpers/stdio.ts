@@ -25,7 +25,10 @@ export interface StdioSession {
  * Starts dist/cli.js like Codex does (cwd = plugin directory) with a fake `.fake` language server. The CLI sees
  * only an isolated environment: a private home and state directory and the test's own configuration files.
  */
-export async function startCli(extraEnv: Record<string, string> = {}): Promise<StdioSession> {
+export async function startCli(
+	extraEnv: Record<string, string> = {},
+	serverCommand: readonly string[] = [process.execPath, FAKE_SERVER],
+): Promise<StdioSession> {
 	const context = isolatedContext("codex-lsp-test");
 	const workspace = context.root;
 	const configPath = join(workspace, "lsp-client.json");
@@ -34,7 +37,7 @@ export async function startCli(extraEnv: Record<string, string> = {}): Promise<S
 		configPath,
 		JSON.stringify({
 			schemaVersion: 1,
-			servers: { fake: { command: [process.execPath, FAKE_SERVER], env: { FAKE_LSP_LOG: logPath } } },
+			servers: { fake: { command: serverCommand, env: { FAKE_LSP_LOG: logPath } } },
 			languages: { fake: { extensions: [".fake"], semanticServer: "fake", diagnosticServers: ["fake"] } },
 		}),
 	);

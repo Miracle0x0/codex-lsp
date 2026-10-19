@@ -56,7 +56,7 @@ describe.skipIf(process.platform === "win32")("spawnProcess process tree (POSIX)
 
 		try {
 			// when
-			proc.kill("SIGTERM");
+			await proc.terminate();
 			await proc.exited;
 
 			// then
@@ -64,7 +64,7 @@ describe.skipIf(process.platform === "win32")("spawnProcess process tree (POSIX)
 			await eventually(() => !alive(childPid), 5_000);
 		} finally {
 			if (alive(childPid)) process.kill(childPid, "SIGKILL");
-			proc.kill("SIGKILL");
+			await proc.terminate();
 			rmSync(directory, { recursive: true, force: true });
 		}
 	});

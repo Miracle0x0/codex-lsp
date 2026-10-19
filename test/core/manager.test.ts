@@ -1,3 +1,5 @@
+import { setImmediate } from "node:timers/promises";
+
 import { describe, expect, it } from "vitest";
 
 import { LspProcessExitedError } from "../../src/core/lsp/errors.js";
@@ -20,6 +22,42 @@ function setupManager(optionsFor: () => FakeLspClientOptions = () => ({})) {
 }
 
 describe("LspManager", () => {
+	it("#given a retired client still stopping #when stopAll is called twice #then both calls wait for that client", async () => {
+		let finish!: () => void;
+		const stopGate = new Promise<void>((resolve) => {
+			finish = resolve;
+		});
+		let index = 0;
+		const { manager, clients } = setupManager(() => (index++ === 0 ? { stopGate } : {}));
+		manager.release(await manager.acquire(makeTarget("fake", { key: "old" })));
+		manager.release(await manager.acquire(makeTarget("fake", { key: "new" })));
+		let finished = 0;
+		const first = manager.stopAll().then(() => {
+			finished += 1;
+		});
+		const second = manager.stopAll().then(() => {
+			finished += 1;
+		});
+		try {
+			await setImmediate();
+			expect(finished).toBe(0);
+		} finally {
+			finish();
+			await Promise.all([first, second]);
+		}
+		expect(finished).toBe(2);
+		expect(clients.map((client) => client.stopCallCount)).toEqual([1, 1]);
+	});
+
+	it("#given a retired client failed to stop #when stopAll runs #then its failure remains visible", async () => {
+		let index = 0;
+		const { manager } = setupManager(() => ({ failStop: index++ === 0 }));
+		manager.release(await manager.acquire(makeTarget("fake", { key: "old" })));
+		manager.release(await manager.acquire(makeTarget("fake", { key: "new" })));
+		await setImmediate();
+		await expect(manager.stopAll()).rejects.toThrow("fake stop failed");
+	});
+
 	it("#given a failed start #when acquiring again #then the failed client is stopped and a fresh one is built", async () => {
 		// given
 		let calls = 0;

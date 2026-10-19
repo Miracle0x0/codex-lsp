@@ -22,13 +22,7 @@ import type { EffectiveServer } from "../config/loader.js";
 import type { EnvironmentContext } from "../environment/service.js";
 import type { ToolchainResolution } from "../environment/toolchains/index.js";
 import { reportBestEffortCleanupError } from "./cleanup-errors.js";
-import {
-	BARRIER_TIMEOUT_MS,
-	INIT_TIMEOUT_MS,
-	REQUEST_TIMEOUT_MS,
-	STOP_HARD_KILL_TIMEOUT_MS,
-	STOP_SIGKILL_GRACE_MS,
-} from "./constants.js";
+import { BARRIER_TIMEOUT_MS, INIT_TIMEOUT_MS, REQUEST_TIMEOUT_MS, STOP_REQUEST_TIMEOUT_MS } from "./constants.js";
 import { matchesDocumentSelector } from "./document-selector.js";
 import {
 	LspConnectionClosedError,
@@ -130,14 +124,18 @@ const CLIENT_CAPABILITIES: ClientCapabilities = {
 	},
 };
 
-/** Resolves with `promise`, or with `fallback` once `ms` pass; the timer never outlives the race. */
-async function within<T, F>(promise: Promise<T>, ms: number, fallback: F): Promise<T | F> {
+/** Bounds the whole handshake, including a blocked exit notification write. */
+async function shutdownConnection(connection: MessageConnection): Promise<void> {
 	let timer: NodeJS.Timeout | undefined;
 	try {
-		return await Promise.race([
-			promise,
-			new Promise<F>((resolve) => {
-				timer = setTimeout(() => resolve(fallback), ms);
+		await Promise.race([
+			(async () => {
+				await connection.sendRequest("shutdown");
+				// On Windows taskkill needs the leader alive to find its descendants.
+				if (process.platform !== "win32") await connection.sendNotification("exit");
+			})(),
+			new Promise<never>((_resolve, reject) => {
+				timer = setTimeout(() => reject(new Error("LSP shutdown handshake timed out")), STOP_REQUEST_TIMEOUT_MS);
 			}),
 		]);
 	} finally {
@@ -177,6 +175,7 @@ export class LspClient {
 
 	private proc: SpawnedProcess | null = null;
 	private connection: MessageConnection | null = null;
+	private stopping: Promise<void> | undefined;
 	private readonly stderr: string[] = [];
 	private readonly registrations = new Map<string, Registration>();
 	private readonly published = new Map<string, PublishedDiagnostics>();
@@ -632,14 +631,17 @@ export class LspClient {
 		}
 	}
 
-	async stop(): Promise<void> {
-		const wasRunning = this.state !== "stopped";
+	stop(): Promise<void> {
+		this.stopping ??= this.stopClient();
+		return this.stopping;
+	}
+
+	private async stopClient(): Promise<void> {
 		this.state = "stopped";
 		const connection = this.connection;
-		if (connection && wasRunning && !this.exited) {
+		if (connection && !this.exited) {
 			try {
-				await this.request<null>("shutdown", undefined, undefined, STOP_HARD_KILL_TIMEOUT_MS);
-				await connection.sendNotification("exit");
+				await shutdownConnection(connection);
 			} catch (error) {
 				reportBestEffortCleanupError("shutdown request", error);
 			}
@@ -652,19 +654,7 @@ export class LspClient {
 			}
 			this.connection = null;
 		}
-		const proc = this.proc;
-		if (proc && proc.exitCode === null) {
-			proc.kill();
-			const exited = await within(
-				proc.exited.then(() => true),
-				STOP_HARD_KILL_TIMEOUT_MS,
-				false,
-			);
-			if (!exited) {
-				proc.kill("SIGKILL");
-				await within(proc.exited, STOP_SIGKILL_GRACE_MS, undefined);
-			}
-		}
+		await this.proc?.terminate();
 		this.markExited();
 		this.documents.clear();
 		this.published.clear();

@@ -8,8 +8,10 @@ export const BARRIER_TIMEOUT_MS = 2_000;
 export const INIT_TIMEOUT_MS = 60_000;
 export const IDLE_TIMEOUT_MS = 5 * 60_000;
 export const REAPER_INTERVAL_MS = 60_000;
-export const STOP_HARD_KILL_TIMEOUT_MS = 5_000;
-export const STOP_SIGKILL_GRACE_MS = 1_000;
+// Leave headroom within Codex's two-second TERM-to-KILL window for the MCP process.
+export const STOP_REQUEST_TIMEOUT_MS = 500;
+export const STOP_TERM_TIMEOUT_MS = 500;
+export const STOP_KILL_TIMEOUT_MS = 500;
 
 /** How long a push-diagnostics server gets to publish for a synced document. */
 export const DIAGNOSTICS_TIMEOUT_MS = 20_000;

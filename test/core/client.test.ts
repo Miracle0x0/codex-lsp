@@ -83,4 +83,12 @@ describe("LspClient waits", () => {
 		expect(client.isAlive()).toBe(false);
 		expect(timers()).toBeLessThanOrEqual(before);
 	});
+
+	it("#given a running server #when stop is called concurrently #then callers share completion", async () => {
+		const { client } = await startClient();
+		const first = client.stop();
+		expect(client.stop()).toBe(first);
+		await first;
+		expect(client.isAlive()).toBe(false);
+	});
 });

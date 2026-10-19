@@ -1,7 +1,8 @@
 import { readFileSync } from "node:fs";
+import type { Readable, Writable } from "node:stream";
 
 import { type CallToolResult, McpServer, type ServerContext } from "@modelcontextprotocol/server";
-import { type StdioServerHandle, serveStdio } from "@modelcontextprotocol/server/stdio";
+import { StdioServerTransport, serveStdio } from "@modelcontextprotocol/server/stdio";
 
 import type { ContextResolver, ToolCallContext } from "../runtime/context.js";
 import type { LspRuntime } from "../runtime/runtime.js";
@@ -107,7 +108,44 @@ export function createLspServerFactory(runtime: LspRuntime, options: LspServerFa
 	};
 }
 
-/** Serves the 2026-07-28 MCP revision over stdio; 2025-era clients are rejected. */
-export function serveLspStdio(runtime: LspRuntime, options: LspServerFactoryOptions = {}): StdioServerHandle {
-	return serveStdio(createLspServerFactory(runtime, options), { legacy: "reject" });
+export interface LspStdioOptions extends LspServerFactoryOptions {
+	readonly stdin?: Readable;
+	readonly stdout?: Writable;
+}
+
+export interface LspStdioHandle {
+	/** Resolves after the final transport and runtime close, or rejects with cleanup failures. */
+	readonly closed: Promise<void>;
+	close(): Promise<void>;
+}
+
+/** Owns the stdio connection and its runtime; negotiation instances do not own runtime lifetime. */
+export function serveLspStdio(runtime: LspRuntime, options: LspStdioOptions = {}): LspStdioHandle {
+	const transport = new StdioServerTransport(options.stdin, options.stdout);
+	const handle = serveStdio(createLspServerFactory(runtime, options), { legacy: "reject", transport });
+	let resolveClosed!: () => void;
+	let rejectClosed!: (error: unknown) => void;
+	const closed = new Promise<void>((resolve, reject) => {
+		resolveClosed = resolve;
+		rejectClosed = reject;
+	});
+	let closing = false;
+	const close = (): Promise<void> => {
+		if (!closing) {
+			closing = true;
+			// Start LSP cleanup immediately; it must not wait behind a blocked MCP write.
+			void Promise.allSettled([handle.close(), runtime.dispose()]).then((results) => {
+				const failures = results.filter((result) => result.status === "rejected").map((result) => result.reason);
+				if (failures.length === 0) resolveClosed();
+				else rejectClosed(new AggregateError(failures, failures.map(String).join("; ")));
+			});
+		}
+		return closed;
+	};
+	const onClose = transport.onclose;
+	transport.onclose = () => {
+		onClose?.();
+		void close();
+	};
+	return { close, closed };
 }

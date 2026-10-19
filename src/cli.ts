@@ -62,31 +62,23 @@ async function serveMcp(): Promise<void> {
 		postEditDiagnosticsTool(feedback),
 	];
 	const handle = serveLspStdio(runtime, { tools, resolveContext: resolveCodexContext });
-	shutdownOnExit(async () => {
-		try {
-			await handle.close();
-		} finally {
-			await runtime.dispose();
-		}
-	});
+	shutdownOnExit(handle);
 }
 
 const TERMINATION_SIGNALS: readonly NodeJS.Signals[] =
-	process.platform === "win32" ? ["SIGINT", "SIGTERM", "SIGBREAK"] : ["SIGINT", "SIGTERM"];
+	process.platform === "win32" ? ["SIGINT", "SIGTERM", "SIGBREAK"] : ["SIGINT", "SIGTERM", "SIGHUP"];
 
 /** The CLI owns process exit: stdin EOF and every termination signal wait for the same shutdown. */
-function shutdownOnExit(close: () => Promise<void>): void {
-	let closing = false;
+function shutdownOnExit(handle: { close(): Promise<void>; readonly closed: Promise<void> }): void {
 	const shutdown = (): void => {
-		if (closing) return;
-		closing = true;
-		close().catch((error: unknown) => {
-			stderr.write(`codex-lsp: shutdown failed: ${error instanceof Error ? error.message : String(error)}\n`);
-			process.exitCode = 1;
-		});
+		void handle.close();
 	};
-	process.stdin.once("end", shutdown);
-	for (const signal of TERMINATION_SIGNALS) process.once(signal, shutdown);
+	void handle.closed.catch((error: unknown) => {
+		stderr.write(`codex-lsp: shutdown failed: ${error instanceof Error ? error.message : String(error)}\n`);
+		process.exitCode = 1;
+	});
+	// Keep handlers installed throughout cleanup: repeated signals must not restore default termination.
+	for (const signal of TERMINATION_SIGNALS) process.on(signal, shutdown);
 }
 
 function option(args: readonly string[], name: string): string | undefined {

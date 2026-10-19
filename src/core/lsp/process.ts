@@ -1,8 +1,11 @@
-import { type ChildProcess, spawn, spawnSync } from "node:child_process";
+import { type ChildProcess, execFile, spawn } from "node:child_process";
 import { existsSync, statSync } from "node:fs";
+import { setTimeout as delay } from "node:timers/promises";
+import { promisify } from "node:util";
 
 import { reportBestEffortCleanupError } from "./cleanup-errors.js";
 import { envValue } from "./command.js";
+import { STOP_KILL_TIMEOUT_MS, STOP_TERM_TIMEOUT_MS } from "./constants.js";
 import { LspInvalidPathError, LspProcessSpawnError } from "./errors.js";
 
 export interface SpawnedProcess {
@@ -12,7 +15,8 @@ export interface SpawnedProcess {
 	pid: number | undefined;
 	exitCode: number | null;
 	exited: Promise<number>;
-	kill(signal?: NodeJS.Signals): void;
+	/** Stops the owned process group, even after its leader exits. Repeated calls share completion. */
+	terminate(): Promise<void>;
 }
 
 export interface SpawnOptions {
@@ -29,12 +33,6 @@ export interface PreparedSpawnCommand {
 function isMissingProcessError(error: unknown): boolean {
 	if (!(error instanceof Error) || !("code" in error)) return false;
 	return error.code === "ESRCH";
-}
-
-function reportKillError(context: string, error: unknown): void {
-	if (!isMissingProcessError(error)) {
-		reportBestEffortCleanupError(context, error);
-	}
 }
 
 export function validateCwd(cwd: string): { valid: boolean; error?: string } {
@@ -56,8 +54,18 @@ export function validateCwd(cwd: string): { valid: boolean; error?: string } {
 }
 
 function wrap(proc: ChildProcess): SpawnedProcess {
+	let termination: Promise<void> | undefined;
+	const terminate = (): Promise<void> => {
+		termination ??= terminateProcessTree(proc);
+		return termination;
+	};
 	const exitedPromise = new Promise<number>((resolve) => {
-		proc.once("close", (code) => resolve(code ?? 0));
+		// A descendant may retain stdio after the leader dies; close is not a process-exit notification.
+		proc.once("exit", (code) => {
+			// Release group ownership now, not at a later idle reap when this PID could have been reused.
+			void terminate().catch((error: unknown) => reportBestEffortCleanupError("process group cleanup", error));
+			resolve(code ?? 0);
+		});
 		proc.once("error", () => resolve(1));
 	});
 
@@ -76,32 +84,57 @@ function wrap(proc: ChildProcess): SpawnedProcess {
 			return proc.exitCode;
 		},
 		exited: exitedPromise,
-		kill(signal?: NodeJS.Signals) {
-			killProcessTree(proc, signal ?? "SIGTERM");
-		},
+		terminate,
 	};
 }
 
-function killProcessTree(proc: ChildProcess, signal: NodeJS.Signals): void {
-	if (process.platform === "win32" && proc.pid) {
-		const result = spawnSync("taskkill", ["/pid", String(proc.pid), "/f", "/t"], { stdio: "ignore" });
-		if (!result.error && result.status === 0) return;
-		if (result.error) reportKillError("windows process tree kill", result.error);
-	}
-
-	if (process.platform !== "win32" && proc.pid) {
-		try {
-			process.kill(-proc.pid, signal);
-			return;
-		} catch (error) {
-			reportKillError("process group kill", error);
-		}
-	}
-
+/** ESRCH means the group is gone; every other signal failure must reach the caller. */
+function signalGroup(pid: number, signal: NodeJS.Signals | 0): boolean {
 	try {
-		proc.kill(signal);
+		process.kill(-pid, signal);
+		return true;
 	} catch (error) {
-		reportKillError("process kill", error);
+		if (isMissingProcessError(error)) return false;
+		throw error;
+	}
+}
+
+async function waitForExit(alive: () => boolean, timeoutMs: number): Promise<boolean> {
+	const deadline = Date.now() + timeoutMs;
+	while (alive()) {
+		const remaining = deadline - Date.now();
+		if (remaining <= 0) return false;
+		await delay(Math.min(20, remaining));
+	}
+	return true;
+}
+
+async function terminateProcessTree(proc: ChildProcess): Promise<void> {
+	const pid = proc.pid;
+	if (pid === undefined) return;
+	try {
+		if (process.platform === "win32") {
+			if (proc.exitCode !== null || proc.signalCode !== null) return;
+			await promisify(execFile)("taskkill", ["/pid", String(pid), "/f", "/t"], {
+				windowsHide: true,
+				timeout: STOP_TERM_TIMEOUT_MS,
+				killSignal: "SIGKILL",
+			});
+			if (!(await waitForExit(() => proc.exitCode === null && proc.signalCode === null, STOP_KILL_TIMEOUT_MS))) {
+				throw new Error(`Language server process ${pid} is still running after taskkill`);
+			}
+			return;
+		}
+		if (!signalGroup(pid, "SIGTERM")) return;
+		if (await waitForExit(() => signalGroup(pid, 0), STOP_TERM_TIMEOUT_MS)) return;
+		signalGroup(pid, "SIGKILL");
+		if (!(await waitForExit(() => signalGroup(pid, 0), STOP_KILL_TIMEOUT_MS))) {
+			throw new Error(`Language server process group ${pid} is still present after SIGKILL`);
+		}
+	} finally {
+		proc.stdin?.destroy();
+		proc.stdout?.destroy();
+		proc.stderr?.destroy();
 	}
 }
 
