@@ -1,5 +1,5 @@
 import { type BigIntStats, type FSWatcher, lstatSync, readdirSync, watch } from "node:fs";
-import { basename, join, sep } from "node:path";
+import { basename, dirname, join, sep } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 
 import type { FileChange } from "../documents/store.js";
@@ -29,12 +29,13 @@ interface JournalEvent {
 	readonly path: string;
 }
 
-function statOf(path: string): BigIntStats | undefined {
-	try {
-		return lstatSync(path, { bigint: true });
-	} catch {
-		return undefined;
-	}
+type PathState =
+	| { readonly kind: "present"; readonly stat: BigIntStats }
+	| { readonly kind: "missing" }
+	| { readonly kind: "unreadable" };
+
+function isMissingPath(error: unknown): boolean {
+	return error instanceof Error && "code" in error && (error.code === "ENOENT" || error.code === "ENOTDIR");
 }
 
 /** Identity and write metadata; nanosecond timestamps retain changes within the same millisecond. */
@@ -71,20 +72,21 @@ export class FileChangeJournal {
 		this.maxDirectories = options.maxDirectories ?? JOURNAL_MAX_DIRECTORIES;
 		this.maxEvents = options.maxEvents ?? JOURNAL_MAX_EVENTS;
 		this.drainMs = options.drainMs ?? JOURNAL_DRAIN_MS;
-		this.watchTree(root, false);
+		this.scanTree(root, false);
 	}
 
 	/** Position to pass to `collect` later; changes after it belong to the window. */
 	mark(): JournalMark {
+		// Watch registration and notification delivery are asynchronous on some platforms.
+		// Establish the actual pre-command state before assigning changes to a new window.
+		if (!this.closed) this.scanTree(this.root, true);
 		return { seq: this.seq, files: new Set(this.files.keys()) };
 	}
 
 	/** Files created, changed, or deleted after `mark`, classified by their state now. */
 	async collect(mark: JournalMark): Promise<JournalWindow> {
 		await delay(this.drainMs);
-		const reasons = [...this.standingProblems];
-		if (mark.seq < this.droppedThrough) reasons.push("watch events were dropped because too many changes happened");
-		for (const problem of this.problems) if (problem.seq > mark.seq) reasons.push(problem.reason);
+		if (!this.closed) this.scanTree(this.root, true);
 		const paths = new Set<string>();
 		for (const event of this.events) {
 			if (event.seq <= mark.seq) continue;
@@ -92,10 +94,15 @@ export class FileChangeJournal {
 		}
 		const changes: FileChange[] = [];
 		for (const path of paths) {
-			const stat = statOf(path);
-			if (stat === undefined) changes.push({ path, kind: "deleted" });
-			else if (stat.isFile()) changes.push({ path, kind: mark.files.has(path) ? "changed" : "created" });
+			const state = this.statOf(path);
+			if (state.kind === "missing") changes.push({ path, kind: "deleted" });
+			else if (state.kind === "present" && state.stat.isFile()) {
+				changes.push({ path, kind: mark.files.has(path) ? "changed" : "created" });
+			}
 		}
+		const reasons = [...this.standingProblems];
+		if (mark.seq < this.droppedThrough) reasons.push("watch events were dropped because too many changes happened");
+		for (const problem of this.problems) if (problem.seq > mark.seq) reasons.push(problem.reason);
 		if (this.closed) reasons.push("the workspace file journal was closed before this command finished");
 		return { changes, incompleteReasons: [...new Set(reasons)] };
 	}
@@ -122,38 +129,67 @@ export class FileChangeJournal {
 		this.seq += 1;
 	}
 
-	/** Watches a directory tree; `recordFiles` records files found as created (a directory that just appeared). */
-	private watchTree(directory: string, recordFiles: boolean): void {
+	/** Reconciles the watched tree with disk; watchers also record intermediate states between command boundaries. */
+	private scanTree(directory: string, recordFiles: boolean): void {
 		const pending = [directory];
+		const seen = new Set<string>();
+		const scannedDirectories = new Set<string>();
 		while (pending.length > 0) {
 			const current = pending.pop();
-			if (current === undefined || this.watchers.has(current)) continue;
-			if (this.watchers.size >= this.maxDirectories) {
-				this.standingProblems.add(
-					`more than ${this.maxDirectories} directories; changes under unwatched directories are not tracked`,
-				);
-				return;
+			if (current === undefined) continue;
+			if (!this.watchers.has(current)) {
+				if (this.watchers.size >= this.maxDirectories) {
+					this.standingProblems.add(
+						`more than ${this.maxDirectories} directories; changes under unwatched directories are not tracked`,
+					);
+					continue;
+				}
+				if (!this.watch(current)) continue;
 			}
-			if (!this.watch(current)) continue;
 			let entries: string[];
 			try {
 				entries = readdirSync(current);
-			} catch {
-				this.standingProblems.add(`cannot read directory ${current}`);
+			} catch (error) {
+				if (isMissingPath(error)) this.removeTree(current);
+				else this.standingProblems.add(`cannot read directory ${current}`);
 				continue;
 			}
+			scannedDirectories.add(current);
 			for (const entry of entries) {
 				const path = join(current, entry);
-				const stat = statOf(path);
-				if (stat === undefined || stat.isSymbolicLink()) continue;
+				seen.add(path);
+				const state = this.statOf(path);
+				if (state.kind === "missing") this.removeTree(path);
+				if (state.kind !== "present" || state.stat.isSymbolicLink()) continue;
+				const stat = state.stat;
 				if (stat.isDirectory()) {
 					if (!this.isExcluded(path)) pending.push(path);
 				} else if (stat.isFile()) {
-					this.files.set(path, fileStamp(stat));
-					if (recordFiles) this.record(path);
+					this.observeFile(path, stat, recordFiles);
 				}
 			}
 		}
+		// An unreadable directory does not prove its children were deleted.
+		for (const path of [...this.watchers.keys(), ...this.files.keys()]) {
+			if (scannedDirectories.has(dirname(path)) && !seen.has(path)) this.removeTree(path);
+		}
+	}
+
+	private statOf(path: string): PathState {
+		try {
+			return { kind: "present", stat: lstatSync(path, { bigint: true }) };
+		} catch (error) {
+			if (isMissingPath(error)) return { kind: "missing" };
+			this.standingProblems.add(`cannot inspect ${path}: ${error instanceof Error ? error.message : String(error)}`);
+			return { kind: "unreadable" };
+		}
+	}
+
+	private observeFile(path: string, stat: BigIntStats, record: boolean): void {
+		const stamp = fileStamp(stat);
+		if (this.files.get(path) === stamp) return;
+		this.files.set(path, stamp);
+		if (record) this.record(path);
 	}
 
 	private watch(directory: string): boolean {
@@ -183,25 +219,25 @@ export class FileChangeJournal {
 		const filename = name.toString();
 		// macOS also reports a watched directory's own removal using its basename.
 		// A real child with that name is still handled normally while the parent exists.
-		if (filename === basename(directory) && statOf(directory) === undefined) {
+		if (filename === basename(directory) && this.statOf(directory).kind === "missing") {
 			this.removeTree(directory);
 			return;
 		}
 		const path = join(directory, filename);
-		const stat = statOf(path);
-		if (stat?.isDirectory()) {
-			if (!this.isExcluded(path)) this.watchTree(path, true);
+		const state = this.statOf(path);
+		if (state.kind === "unreadable") return;
+		if (state.kind === "missing") {
+			this.removeTree(path);
 			return;
 		}
-		if (stat?.isSymbolicLink()) return;
-		if (stat === undefined) {
-			this.removeTree(path);
-		} else if (stat.isFile()) {
-			const stamp = fileStamp(stat);
+		const stat = state.stat;
+		if (stat.isDirectory()) {
+			if (!this.isExcluded(path)) this.scanTree(path, true);
+			return;
+		}
+		if (stat.isFile()) {
 			// Delayed startup events and duplicate notifications do not represent a new file state.
-			if (this.files.get(path) === stamp) return;
-			this.files.set(path, stamp);
-			this.record(path);
+			this.observeFile(path, stat, true);
 		}
 	}
 

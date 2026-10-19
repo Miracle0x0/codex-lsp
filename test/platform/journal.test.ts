@@ -1,34 +1,16 @@
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { mkdirSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
-import {
-	FileChangeJournal,
-	type JournalMark,
-	type JournalOptions,
-	type JournalWindow,
-} from "../../src/core/workspace/journal.js";
+import type { FileChangeJournal, JournalMark, JournalWindow } from "../../src/core/workspace/journal.js";
+import { journalFixture } from "../support/journal.js";
 
 const cleanups: Array<() => void> = [];
+const journalIn = journalFixture(cleanups);
 
 afterEach(() => {
 	for (const cleanup of cleanups.splice(0).reverse()) cleanup();
 });
-
-function journalIn(files: Record<string, string>, options: Partial<JournalOptions> = {}) {
-	const root = realpathSync(mkdtempSync(join(tmpdir(), "lsp-journal-")));
-	for (const [path, content] of Object.entries(files)) {
-		mkdirSync(join(root, path, ".."), { recursive: true });
-		writeFileSync(join(root, path), content);
-	}
-	const journal = new FileChangeJournal(root, { exclude: [], drainMs: 0, ...options });
-	cleanups.push(() => {
-		journal.close();
-		rmSync(root, { recursive: true, force: true });
-	});
-	return { root, journal };
-}
 
 /**
  * Collects the window until `done` holds. fs.watch delivers events asynchronously and at platform-dependent
