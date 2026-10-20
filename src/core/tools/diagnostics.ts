@@ -64,7 +64,6 @@ export async function runDiagnostics(
 			defaultSeverity: "hint",
 			servers: input.servers,
 			timeoutMs: input.timeoutMs,
-			closeOpened: isDirectory,
 			limit: input.limit,
 		},
 		context.signal,

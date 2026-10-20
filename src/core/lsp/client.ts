@@ -266,9 +266,14 @@ export class LspClient {
 		connection.onNotification("textDocument/publishDiagnostics", (params: unknown) => {
 			if (!isRecord(params) || typeof params["uri"] !== "string" || !isDiagnosticArray(params["diagnostics"]))
 				return;
+			// Only in-flight document owners consume pushes. Closed-file publications must not
+			// recreate released caches, and an earlier open lifetime must not overwrite this one.
+			const document = this.documents.get(params["uri"]);
+			const version = typeof params["version"] === "number" ? params["version"] : null;
+			if (document === undefined || (version !== null && version < document.version)) return;
 			const published: PublishedDiagnostics = {
 				uri: params["uri"],
-				version: typeof params["version"] === "number" ? params["version"] : null,
+				version,
 				diagnostics: params["diagnostics"],
 				seq: this.nextSeq(),
 			};
@@ -409,6 +414,11 @@ export class LspClient {
 
 	latestPublished(uri: string): PublishedDiagnostics | undefined {
 		return this.published.get(uri);
+	}
+
+	clearDiagnostics(uri: string): void {
+		this.published.delete(uri);
+		this.pullCache.delete(uri);
 	}
 
 	/**

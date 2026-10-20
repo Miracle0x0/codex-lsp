@@ -245,6 +245,7 @@ function summarize(status: StatusOutput): string {
 			`  ${client.serverId}: ${client.state}; root=${client.projectRoot}; env=${client.environmentId ?? client.environmentSource}` +
 				`${client.environmentGeneration === null ? "" : `#${client.environmentGeneration}`}; ${client.serverInfo ?? client.executable}` +
 				`; ${client.backend}: ${client.launch}` +
+				`; requests=${client.refCount}; openDocuments=${client.openDocuments}` +
 				`${client.toolchain ? `; ${client.toolchain}` : ""}`,
 		);
 	}

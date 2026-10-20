@@ -42,8 +42,6 @@ export interface ProviderOutcome {
 export interface DiagnosticRunOptions {
 	readonly timeoutMs: number;
 	readonly signal: AbortSignal;
-	/** Close documents this run opened, for directory scans that would otherwise pin every file. */
-	readonly closeOpened: boolean;
 }
 
 const STATUS_BY_FAILURE: Partial<Record<ToolFailureCode, ProviderStatus>> = {
@@ -114,9 +112,11 @@ export class DiagnosticService {
 								if (file !== undefined) collected[index] = await this.collect(client, file, serverId, options);
 							}
 						};
-						await Promise.all(
+						const workers = await Promise.allSettled(
 							Array.from({ length: Math.min(DIAGNOSTICS_CONCURRENCY, groupFiles.length) }, worker),
 						);
+						// Do not release the client while another worker still owns a document.
+						for (const worker of workers) if (worker.status === "rejected") throw worker.reason;
 						results.push(...collected);
 						mode = client.supportsPullDiagnostics() ? "pull" : "push";
 					},
@@ -144,9 +144,9 @@ export class DiagnosticService {
 		options: DiagnosticRunOptions,
 	): Promise<FileDiagnostics> {
 		const syncedBefore = client.documents.get(file.uri)?.syncSeq;
-		const { document, opened } = await this.documents.sync(client, file.path, file.languageId);
-		const changed = opened || document.syncSeq !== syncedBefore;
-		try {
+		return this.documents.withDocument(client, file.path, file.languageId, async ({ document, opened }) => {
+			const changed = opened || document.syncSeq !== syncedBefore;
+			if (opened) await this.documents.save(client, document);
 			const collected: Collected = client.supportsPullDiagnostics()
 				? await this.pullSettled(client, document, changed, options)
 				: await this.push(client, document, options);
@@ -159,9 +159,7 @@ export class DiagnosticService {
 				diagnostics: collected.diagnostics,
 				documentText: document.text,
 			};
-		} finally {
-			if (opened && options.closeOpened) await this.documents.close(client, file.uri);
-		}
+		});
 	}
 
 	/**

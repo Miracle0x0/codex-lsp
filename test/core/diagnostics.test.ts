@@ -29,6 +29,17 @@ async function diagnose(
 	return { batch: result.structuredContent as DiagnosticBatch, isError: result.isError === true };
 }
 
+/** Keeps a document owned by an overlapping semantic operation while MCP checks exercise changes. */
+async function withOpenDocument(h: McpHarness, filePath: string, run: () => Promise<void>): Promise<void> {
+	const context = { signal: new AbortController().signal };
+	const file = h.runtime.file({ filePath }, context);
+	await h.runtime.withSemantic(
+		file,
+		{ signal: context.signal, readOnly: true, capability: "hoverProvider", method: "textDocument/hover" },
+		run,
+	);
+}
+
 describe("multi-source diagnostics", () => {
 	it("#given two diagnostic servers for one language #when checking a file #then both report with their own provider ids", async () => {
 		// given
@@ -159,27 +170,25 @@ describe("multi-source diagnostics", () => {
 		expect(batch.complete).toBe(false);
 	});
 
-	it("#given an unchanged file #when checking twice #then the confirmed snapshot is reused without asking the server again", async () => {
+	it("#given an unchanged file still owned by another request #when checking twice #then its confirmed snapshot is reused", async () => {
 		// given
 		const h = await harness();
 		h.writeFile("a.fake", "ERROR\n");
-		await diagnose(h, { filePath: "a.fake" });
-		const sentBefore = h.readLog().length;
-
-		// when
-		const { batch } = await diagnose(h, { filePath: "a.fake", timeoutMs: 10_000 });
-
-		// then
-		expect(h.readLog().slice(sentBefore)).toEqual([]);
-		expect(batch.files[0]?.freshness).toBe("confirmed");
-		expect(batch.counts.error).toBe(1);
+		await withOpenDocument(h, "a.fake", async () => {
+			await diagnose(h, { filePath: "a.fake" });
+			const sentBefore = h.readLog().length;
+			const { batch } = await diagnose(h, { filePath: "a.fake", timeoutMs: 10_000 });
+			expect(h.readLog().slice(sentBefore)).toEqual([]);
+			expect(batch.files[0]?.freshness).toBe("confirmed");
+			expect(batch.counts.error).toBe(1);
+		});
 	});
 
 	it("#given an edited file #when checking again #then diagnostics follow the new content and version", async () => {
 		// given
 		const h = await harness();
 		h.writeFile("a.fake", "ERROR\n");
-		await diagnose(h, { filePath: "a.fake" });
+		const before = await diagnose(h, { filePath: "a.fake" });
 
 		// when
 		h.writeFile("a.fake", "fixed\n");
@@ -187,31 +196,32 @@ describe("multi-source diagnostics", () => {
 
 		// then
 		expect(batch.counts.total).toBe(0);
-		expect(batch.files[0]).toMatchObject({ documentVersion: 2, freshness: "confirmed" });
+		expect(batch.files[0]?.freshness).toBe("confirmed");
+		expect(batch.files[0]?.documentVersion).toBeGreaterThan(before.batch.files[0]?.documentVersion ?? 0);
 	});
 
 	it("#given a server that skips republishing unchanged results #when edits keep the diagnostics #then the client learns to reopen right away", async () => {
 		// given
 		const h = await harness({ skipUnchanged: true, clearOnClose: true });
 		h.writeFile("a.fake", "ERROR one\n");
-		await diagnose(h, { filePath: "a.fake" });
-		const reopens = (): number => h.readLog().filter((entry) => entry.method === "textDocument/didClose").length;
-		const client = h.runtime.manager.activeClients()[0];
-		expect(client?.skipsUnchangedRepublish).toBe(false);
+		await withOpenDocument(h, "a.fake", async () => {
+			await diagnose(h, { filePath: "a.fake" });
+			const reopens = (): number => h.readLog().filter((entry) => entry.method === "textDocument/didClose").length;
+			const client = h.runtime.manager.activeClients()[0];
+			expect(client?.skipsUnchangedRepublish).toBe(false);
 
-		// when
-		h.writeFile("a.fake", "ERROR one\n\n");
-		const first = await diagnose(h, { filePath: "a.fake" });
-		const afterFirst = { reopens: reopens(), learned: client?.skipsUnchangedRepublish };
-		h.writeFile("a.fake", "ERROR one\n\n\n");
-		const second = await diagnose(h, { filePath: "a.fake" });
+			h.writeFile("a.fake", "ERROR one\n\n");
+			const first = await diagnose(h, { filePath: "a.fake" });
+			const afterFirst = { reopens: reopens(), learned: client?.skipsUnchangedRepublish };
+			h.writeFile("a.fake", "ERROR one\n\n\n");
+			const second = await diagnose(h, { filePath: "a.fake" });
 
-		// then
-		expect(first.batch.counts.error).toBe(1);
-		expect(afterFirst).toEqual({ reopens: 1, learned: true });
-		expect(second.batch.counts.error).toBe(1);
-		expect(second.batch.files[0]?.freshness).toBe("confirmed");
-		expect(reopens()).toBe(2);
+			expect(first.batch.counts.error).toBe(1);
+			expect(afterFirst).toEqual({ reopens: 1, learned: true });
+			expect(second.batch.counts.error).toBe(1);
+			expect(second.batch.files[0]?.freshness).toBe("confirmed");
+			expect(reopens()).toBe(2);
+		});
 	});
 
 	it("#given a server that clears diagnostics on close #when a reopen nudge follows an edit that adds a problem #then the new problem is reported", async () => {
@@ -236,19 +246,19 @@ describe("multi-source diagnostics", () => {
 		const h = await harness({ publishOnce: true });
 		h.writeFile("a.fake", "ERROR\n");
 		h.writeFile("b.fake", "fine\n");
-		await diagnose(h, { filePath: "a.fake" });
-		await diagnose(h, { filePath: "b.fake" });
-
-		// when
-		h.writeFile("b.fake", "changed\n");
-		await diagnose(h, { filePath: "b.fake", timeoutMs: 500 });
-		const { batch, isError } = await diagnose(h, { filePath: "a.fake", timeoutMs: 500 });
-
-		// then
-		expect(isError).toBe(false);
-		expect(batch.files[0]?.freshness).toBe("unconfirmed");
-		expect(batch.complete).toBe(false);
-		expect(batch.counts.error).toBe(1);
+		await withOpenDocument(h, "a.fake", () =>
+			withOpenDocument(h, "b.fake", async () => {
+				await diagnose(h, { filePath: "a.fake" });
+				await diagnose(h, { filePath: "b.fake" });
+				h.writeFile("b.fake", "changed\n");
+				await diagnose(h, { filePath: "b.fake", timeoutMs: 500 });
+				const { batch, isError } = await diagnose(h, { filePath: "a.fake", timeoutMs: 500 });
+				expect(isError).toBe(false);
+				expect(batch.files[0]?.freshness).toBe("unconfirmed");
+				expect(batch.complete).toBe(false);
+				expect(batch.counts.error).toBe(1);
+			}),
+		);
 	});
 
 	it("#given unversioned publishes #when checking #then results are marked observed rather than confirmed", async () => {
@@ -482,7 +492,7 @@ describe("pull servers that report progress", () => {
 
 	it("#given a background check that starts after an edit #when checking #then its pushed results are merged with the pull", async () => {
 		// given
-		// Like rust-analyzer: progress while loading, then a check about 100 ms after each change.
+		// Like rust-analyzer: progress while loading, then a check about 100 ms after each save.
 		const h = await harness({
 			diagnosticMode: "pull",
 			loadingMs: 200,

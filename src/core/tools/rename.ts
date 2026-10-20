@@ -145,7 +145,6 @@ export const renameTool = defineLspTool({
 							select: () => ({ paths: changedPaths }),
 							severity: "warning",
 							defaultSeverity: "warning",
-							closeOpened: false,
 						},
 						context.signal,
 					);

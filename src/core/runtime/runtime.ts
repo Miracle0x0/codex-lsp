@@ -143,9 +143,10 @@ export class LspRuntime {
 						`${target.server.id} does not support ${options.method} for ${file.language.id} files.`,
 					);
 				}
-				await this.documents.sync(client, file.path, file.languageId);
-				const positions = new PositionMapper((path) => client.documents.get(pathToFileURL(path).href)?.text);
-				return operation({ client, file, positions });
+				return this.documents.withDocument(client, file.path, file.languageId, async () => {
+					const positions = new PositionMapper((path) => client.documents.get(pathToFileURL(path).href)?.text);
+					return operation({ client, file, positions });
+				});
 			},
 			{ signal: options.signal, readOnly: options.readOnly },
 		);
@@ -159,16 +160,6 @@ export class LspRuntime {
 	/** Tells every running client about file changes made outside the runtime. */
 	async notifyFileChanges(changes: readonly FileChange[]): Promise<void> {
 		await this.documents.applyFileChanges(this.manager.activeClients(), changes);
-	}
-
-	/** Paths of documents open in running clients for a workspace. */
-	openDocumentPaths(workspaceRoot: string | undefined): string[] {
-		const paths = new Set<string>();
-		for (const client of this.manager.activeClients()) {
-			if (client.target.workspaceRoot !== workspaceRoot) continue;
-			for (const document of client.documents.values()) paths.add(document.path);
-		}
-		return [...paths];
 	}
 
 	/** The file-change journal for a workspace, started on first use; the least recently used is closed past the cap. */

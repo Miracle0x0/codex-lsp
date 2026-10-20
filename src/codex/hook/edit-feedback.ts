@@ -126,7 +126,7 @@ export class EditFeedback {
 		return { tracked: true, baselined: stale.length };
 	}
 
-	/** PostToolUse: syncs servers with the change, checks edited and open files, and reports the difference. */
+	/** PostToolUse: checks edited and previously baselined files without keeping their documents open. */
 	async after(event: PostEditEvent, signal: AbortSignal): Promise<PostEditResult> {
 		const found = await this.changesOf(event);
 		if (found === undefined) return emptyResult();
@@ -150,8 +150,8 @@ export class EditFeedback {
 		const edited = [
 			...new Set(changes.filter((change) => change.kind !== "deleted").map((change) => change.path)),
 		].filter(isFile);
-		const related = this.runtime
-			.openDocumentPaths(event.cwd)
+		const related = this.baselines
+			.paths(event.sessionId, event.cwd)
 			.filter((path) => !edited.includes(path) && !deleted.has(path) && isFile(path));
 		if (edited.length === 0 && related.length === 0) return emptyResult(notes, changes);
 
@@ -211,7 +211,6 @@ export class EditFeedback {
 				environmentId: this.runtime.environmentId({}, { signal }),
 				select: () => ({ paths }),
 				defaultSeverity: "warning",
-				closeOpened: false,
 			},
 			signal,
 		);

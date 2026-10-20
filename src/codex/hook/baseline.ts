@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 
-import type { DiagnosticBatch } from "../../core/index.js";
+import { type DiagnosticBatch, isInside } from "../../core/index.js";
 
 export type BatchDiagnostic = DiagnosticBatch["diagnostics"][number];
 
@@ -95,6 +95,11 @@ export class BaselineStore {
 
 	get(session: string, path: string): FileBaseline | undefined {
 		return this.files(session).get(path);
+	}
+
+	/** Previously checked files, without retaining their text or an open LSP document. */
+	paths(session: string, workspaceRoot: string): string[] {
+		return [...this.files(session).keys()].filter((path) => isInside(path, workspaceRoot));
 	}
 
 	set(session: string, path: string, baseline: FileBaseline): void {

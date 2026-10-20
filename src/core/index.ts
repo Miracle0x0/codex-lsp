@@ -15,6 +15,7 @@ export {
 } from "./environment/snapshot.js";
 export { serveLspStdio } from "./mcp/server.js";
 export type { ContextResolver, HostCallContext } from "./runtime/context.js";
+export { isInside } from "./runtime/router.js";
 export { createLspRuntime, type LspRuntime } from "./runtime/runtime.js";
 export { defineLspTool, type RegisteredLspTool } from "./tools/definition.js";
 export { formatToolFailure, toToolFailure } from "./tools/failures.js";

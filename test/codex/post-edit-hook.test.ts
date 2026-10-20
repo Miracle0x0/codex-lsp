@@ -102,6 +102,11 @@ describe("post_edit_diagnostics hook", () => {
 				.map((entry) => entry.pid),
 		);
 		expect(servers.size).toBe(1);
+		const status = await session.client.callTool({
+			name: "status",
+			arguments: { workspaceRoot: session.workspace },
+		});
+		expect(status.structuredContent).toMatchObject({ clients: [{ openDocuments: 0 }] });
 	});
 
 	it("#given a clean edit #when nothing new is found #then the hook returns empty output", async () => {
@@ -223,7 +228,7 @@ describe("post_edit_diagnostics failures", () => {
 		expect(contextOf(output)).not.toContain(`${b}: 1 problem(s) resolved`);
 	});
 
-	it("#given more than ten open files #when the last one breaks #then it is rechecked", async () => {
+	it("#given more than ten previously checked files #when the last one breaks after its document closed #then it is rechecked", async () => {
 		const session = await start();
 		const paths: string[] = [];
 		for (let i = 0; i < 12; i++) {
@@ -231,6 +236,11 @@ describe("post_edit_diagnostics failures", () => {
 			paths.push(path);
 		}
 		await toolCall(session, "apply_patch", paths.map(update).join("\n"), () => undefined);
+		const status = await session.client.callTool({
+			name: "status",
+			arguments: { workspaceRoot: session.workspace },
+		});
+		expect(status.structuredContent).toMatchObject({ clients: [{ openDocuments: 0 }] });
 		const last = paths[11];
 		const first = paths[0];
 		if (last === undefined || first === undefined) throw new Error("missing fixture");

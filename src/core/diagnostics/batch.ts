@@ -21,7 +21,6 @@ export interface CheckOptions {
 	readonly servers?: readonly string[] | undefined;
 	readonly timeoutMs: number;
 	readonly signal: AbortSignal;
-	readonly closeOpened: boolean;
 }
 
 /** Runs every configured diagnostic provider for the files, grouped by language; providers run in parallel. */

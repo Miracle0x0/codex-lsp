@@ -20,7 +20,7 @@
 //   markers                markers this server reports (default ["ERROR", "WARN"])
 //   loadingMs              after initialized, report work-done progress for this long; pulls return [] meanwhile
 //   neverIdle              begin a work-done progress after initialized and never end it
-//   backgroundCheck        { delayMs, durationMs }: after each change, run a progress-reported "check" that
+//   backgroundCheck        { delayMs, durationMs }: after each save, run a progress-reported "check" that
 //                          pushes diagnostics for lines containing "CHECK" (source "check")
 //   clearOnClose           publish an empty result when a document closes (like typescript-language-server)
 //   messageEnv             environment variable whose value is appended to every diagnostic message
@@ -210,11 +210,12 @@ connection.onNotification((method, params) => {
 		const last = params.contentChanges.at(-1);
 		documents.set(uri, { version, text: last?.text ?? documents.get(uri)?.text ?? "" });
 		publish(uri, "change");
-		backgroundCheck(uri);
 	} else if (method === "textDocument/didClose") {
 		documents.delete(params.textDocument.uri);
 		lastPublished.delete(params.textDocument.uri);
 		if (behavior.clearOnClose) void connection.sendNotification("textDocument/publishDiagnostics", { uri: params.textDocument.uri, diagnostics: [] });
+	} else if (method === "textDocument/didSave") {
+		backgroundCheck(params.textDocument.uri);
 	}
 });
 

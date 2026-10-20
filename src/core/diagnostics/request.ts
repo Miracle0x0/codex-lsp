@@ -32,8 +32,6 @@ export interface DiagnosticsRequest {
 	/** Overrides the configured diagnostic servers for every language. */
 	readonly servers?: readonly string[] | undefined;
 	readonly timeoutMs?: number;
-	/** Close documents this check opened; directory scans would otherwise keep every file open. */
-	readonly closeOpened: boolean;
 	/** Maximum diagnostics to include; omit for the complete result that edit baselines compare. */
 	readonly limit?: number;
 }
@@ -70,7 +68,6 @@ export async function runDiagnosticsRequest(
 			servers: request.servers,
 			timeoutMs: request.timeoutMs ?? DIAGNOSTICS_TIMEOUT_MS,
 			signal,
-			closeOpened: request.closeOpened,
 		}),
 		coverage: {
 			scannedFiles: selection.paths.length,

@@ -140,6 +140,21 @@ describeWithTools("Python environments", ["python3", "pyright-langserver", "ruff
 			["ruff", "ok"],
 		]);
 		expect(codes(batch)).toEqual(expect.arrayContaining(["pyright:reportAssignmentType", "ruff:F401"]));
+		const clients = w.runtime.manager.activeClients();
+		expect(clients).toHaveLength(2);
+		expect(clients.every((client) => client.documents.size === 0 && client.pullCache.size === 0)).toBe(true);
+
+		w.write("main.py", "value: int = 1\n");
+		const fixed = await diagnose(w, { filePath: "main.py", environmentId: "env-multi-001" });
+		expect(fixed.complete).toBe(true);
+		expect(fixed.counts.total).toBe(0);
+		for (let index = 0; index < 24; index += 1) w.write(`src/file_${index}.py`, "import os\n");
+		const scanned = await diagnose(w, { filePath: "src", environmentId: "env-multi-001" });
+		expect(scanned.complete).toBe(true);
+		expect(scanned.coverage.checkedFiles).toBe(24);
+		expect(scanned.diagnostics.filter((diagnostic) => diagnostic.code === "F401")).toHaveLength(24);
+		expect(w.runtime.manager.activeClients()).toEqual(clients);
+		expect(clients.every((client) => client.documents.size === 0 && client.pullCache.size === 0)).toBe(true);
 	});
 
 	it("#given a uv project environment at a custom path #when it is active and .venv also exists #then the active one is used and .venv is noted", async () => {

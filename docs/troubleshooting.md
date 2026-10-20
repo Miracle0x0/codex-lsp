@@ -51,7 +51,7 @@ The first check waits until rust-analyzer has loaded the workspace (a few second
 
 ## Language servers remain after exiting Codex
 
-Language servers belong to the plugin's MCP connection. Closing that connection or sending SIGINT, SIGTERM, or (on POSIX) SIGHUP stops them; finishing a response does not. A Codex daemon that still owns an open MCP connection can keep its servers alive until their five-minute idle timeout, checked once per minute.
+Each plugin MCP connection owns its language-server processes; separate Codex sessions do not share a process pool. Closing the connection or sending SIGINT, SIGTERM, or (on POSIX) SIGHUP stops them; finishing a response does not. A Codex daemon that still owns an open MCP connection can keep its servers alive until their five-minute idle timeout, checked once per minute. Document text and push/pull diagnostic caches are released as soon as the last request using a document finishes. `lsp.status` shows active requests and open documents; without in-flight requests, the open document count is zero even while the server retains its own project index.
 
 On POSIX, shutdown stops the entire LSP process group, including workers whose parent has already exited. The plugin allows 500 ms for the LSP shutdown handshake, 500 ms after SIGTERM, and 500 ms after SIGKILL so cleanup fits within Codex's two-second termination grace. Windows uses `taskkill /t /f` while the server is still running. Cleanup errors are written to stderr, and a failed final cleanup makes the plugin exit unsuccessfully. Killing the MCP process with SIGKILL bypasses its cleanup handlers.
 

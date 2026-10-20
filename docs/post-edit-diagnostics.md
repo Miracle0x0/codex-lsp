@@ -1,6 +1,6 @@
 # Post-edit diagnostics
 
-After Codex edits files, the plugin checks them with the language servers that are already running and adds what changed to the conversation. Nothing has to be called by hand, and an edit is never blocked or undone.
+After Codex edits files, the plugin checks them with the configured language servers and adds what changed to the conversation. Servers start on demand and are reused for later checks. Nothing has to be called by hand, and an edit is never blocked or undone.
 
 ## How it works
 
@@ -9,7 +9,7 @@ After Codex edits files, the plugin checks them with the language servers that a
 | Hook | Endpoint | What it does |
 |------|----------|--------------|
 | PreToolUse | `pre_edit_snapshot` | For `apply_patch`: records the current diagnostics of the files the patch updates, deletes, or moves (skipped when an up-to-date record exists). For `Bash`: marks the workspace file-change journal. |
-| PostToolUse | `post_edit_diagnostics` | Works out which files changed, tells every running language server, checks the changed files plus all documents already open in that workspace's servers, and compares the result with the record. |
+| PostToolUse | `post_edit_diagnostics` | Works out which files changed, tells every running language server, checks the changed files plus files with a diagnostic baseline in this session and workspace, and compares the result with the record. |
 
 How the changed files are found:
 
@@ -27,12 +27,12 @@ Diagnostics are compared by provider, severity, code, and message, so problems t
 | problems fixed by the edit | `<file>: N problem(s) resolved` |
 | a file the session had not seen before (for example first changed by a shell command) | `first check in this session; N existing problem(s), not attributed to this edit` |
 | the environment changed since the last check | current problems, marked as not attributed to this edit |
-| an open document broke because of the edit (an importer) | its new problems |
+| a previously baselined file broke because of the edit (an importer) | its new problems |
 | a provider failed, timed out, or is not installed | `Diagnostics incomplete:` with the reason; never hidden by the comparison |
 | a file's diagnostics are unconfirmed | observed problems without edit attribution; the previous baseline is retained and no resolution is claimed |
 | nothing new, a failed patch, or files without a configured language | no feedback |
 
-At most 20 diagnostics are listed in Hook text; the rest are counted. Baselines and Hook structured results retain every collected diagnostic, and all open related files are eligible for checking. For direct inspection, `lsp.diagnostics` has a `limit` parameter (default 200); increase it when the result says `truncated`. Errors and warnings are reported by default; set `diagnostics.minimumSeverity` in the [configuration](configuration.md) to change that.
+At most 20 diagnostics are listed in Hook text; the rest are counted. Baselines and Hook structured results retain every collected diagnostic, and all related files with a baseline are eligible for checking. Baselines contain content hashes and diagnostics, not file text or open LSP documents. For direct inspection, `lsp.diagnostics` has a `limit` parameter (default 200); increase it when the result says `truncated`. Errors and warnings are reported by default; set `diagnostics.minimumSeverity` in the [configuration](configuration.md) to change that.
 
 Example, after a patch that assigns a string to an `int`:
 
@@ -48,7 +48,9 @@ Each line is `path:line:character severity [provider/source code] message`, with
 
 ## Timing
 
-The checks run while Codex waits for the hook (timeouts: 30 s PreToolUse, 60 s PostToolUse). Measured on Linux with small projects: Pyright checks an edit in about 10 ms, typescript-language-server in about 360 ms, and rust-analyzer in about 620 ms (it waits for rust-analyzer's `cargo check`, whose errors such as borrow-checker failures are merged in). The first time a TypeScript edit leaves diagnostics unchanged it takes about 1.9 s, because typescript-language-server does not republish unchanged results; after that the runtime knows and asks it to re-analyze immediately. The first check in a workspace also starts the language server.
+The checks run while Codex waits for the hook (timeouts: 30 s PreToolUse, 60 s PostToolUse). The first check in a workspace also starts the language server. Checks synchronize the saved file contents and send save notifications when the server requests them; for rust-analyzer, this triggers `cargo check`, whose errors such as borrow-checker failures are merged into the result.
+
+A document stays open while requests use it and closes after its last concurrent request finishes, including failure or cancellation. Closing releases its text and push/pull diagnostic caches; later requests reopen it with a fresh version. The language-server process remains available for reuse, and the session's baselines continue to support comparisons across edits.
 
 ## Limits
 
